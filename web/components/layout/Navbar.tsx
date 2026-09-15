@@ -1,10 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Container } from "@/components/ui/Container";
-import { LinkButton } from "@/components/ui/Button";
+import { Button, LinkButton } from "@/components/ui/Button";
 import { Logo } from "@/components/ui/Logo";
+import { getCustomerSession, clearCustomerSession, subscribeToAuthChanges } from "@/lib/auth";
+
+const getServerSnapshot = () => null;
 
 const links = [
   { href: "/#layanan", label: "Layanan" },
@@ -14,7 +18,15 @@ const links = [
 ];
 
 export function Navbar() {
+  const router = useRouter();
   const [open, setOpen] = useState(false);
+  const customer = useSyncExternalStore(subscribeToAuthChanges, getCustomerSession, getServerSnapshot);
+
+  function logout() {
+    clearCustomerSession();
+    setOpen(false);
+    router.push("/");
+  }
 
   return (
     <header className="sticky top-0 z-50 border-b border-slate-100 bg-white/90 backdrop-blur">
@@ -36,12 +48,25 @@ export function Navbar() {
         </nav>
 
         <div className="hidden items-center gap-3 md:flex">
-          <LinkButton href="/login" variant="ghost" className="px-4 py-2 text-sm">
-            Masuk
-          </LinkButton>
-          <LinkButton href="/register" className="px-5 py-2.5 text-sm">
-            Daftar
-          </LinkButton>
+          {customer ? (
+            <>
+              <LinkButton href="/dashboard" variant="ghost" className="px-4 py-2 text-sm">
+                {customer.customer.name || "Dashboard"}
+              </LinkButton>
+              <Button variant="outline" onClick={logout} className="!border-brand-600 !text-brand-700 px-5 py-2.5 text-sm">
+                Keluar
+              </Button>
+            </>
+          ) : (
+            <>
+              <LinkButton href="/login" variant="ghost" className="px-4 py-2 text-sm">
+                Masuk
+              </LinkButton>
+              <LinkButton href="/register" className="px-5 py-2.5 text-sm">
+                Daftar
+              </LinkButton>
+            </>
+          )}
         </div>
 
         <button
@@ -75,12 +100,25 @@ export function Navbar() {
               </Link>
             ))}
             <div className="mt-2 flex flex-col gap-3">
-              <LinkButton href="/login" variant="outline" className="!border-brand-600 !text-brand-700 w-full">
-                Masuk
-              </LinkButton>
-              <LinkButton href="/register" className="w-full">
-                Daftar
-              </LinkButton>
+              {customer ? (
+                <>
+                  <LinkButton href="/dashboard" variant="outline" className="!border-brand-600 !text-brand-700 w-full" onClick={() => setOpen(false)}>
+                    {customer.customer.name || "Dashboard"}
+                  </LinkButton>
+                  <Button onClick={logout} className="w-full">
+                    Keluar
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <LinkButton href="/login" variant="outline" className="!border-brand-600 !text-brand-700 w-full">
+                    Masuk
+                  </LinkButton>
+                  <LinkButton href="/register" className="w-full">
+                    Daftar
+                  </LinkButton>
+                </>
+              )}
             </div>
           </Container>
         </div>

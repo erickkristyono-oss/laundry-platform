@@ -42,9 +42,10 @@ export function LinkButton({
   variant = "primary",
   className = "",
   children,
-}: CommonProps & { href: string }) {
+  onClick,
+}: CommonProps & { href: string; onClick?: () => void }) {
   return (
-    <Link href={href} className={`${base} ${variantClasses[variant]} ${className}`}>
+    <Link href={href} onClick={onClick} className={`${base} ${variantClasses[variant]} ${className}`}>
       {children}
     </Link>
   );

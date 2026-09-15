@@ -53,6 +53,7 @@ type customerSummary struct {
 type coreCustomer struct {
 	ID           string `json:"id"`
 	CustomerCode string `json:"customer_code"`
+	Name         string `json:"name"`
 	IsGuest      bool   `json:"is_guest"`
 }
 
@@ -242,7 +243,7 @@ func (h *Handler) issueCustomerSession(w http.ResponseWriter, r *http.Request, a
 		ExpiresIn:    int(h.Cfg.AccessTokenTTL.Seconds()),
 		Customer: customerSummary{
 			ID:           customer.ID,
-			Name:         "", // Core doesn't echo name back today; left blank rather than a second round-trip.
+			Name:         customer.Name,
 			CustomerCode: customer.CustomerCode,
 		},
 	})

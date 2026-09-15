@@ -7,6 +7,7 @@ import { AuthLayout } from "@/components/layout/AuthLayout";
 import { Field, Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { apiFetch, ApiError } from "@/lib/api";
+import { setCustomerSession } from "@/lib/auth";
 
 // POST /api/v1/customer-auth/login — docs/07-api-contract.md §2 (UQ-03 resolution).
 type LoginResponse = {
@@ -28,11 +29,17 @@ export default function CustomerLoginPage() {
     setLoading(true);
     setError(null);
     try {
-      await apiFetch<LoginResponse>("/api/v1/customer-auth/login", {
+      const res = await apiFetch<LoginResponse>("/api/v1/customer-auth/login", {
         method: "POST",
+        auth: "none",
         body: JSON.stringify({ identifier, password }),
       });
-      router.push("/");
+      setCustomerSession({
+        accessToken: res.access_token,
+        refreshToken: res.refresh_token,
+        customer: res.customer,
+      });
+      router.push("/dashboard");
     } catch (err) {
       setError(
         err instanceof ApiError

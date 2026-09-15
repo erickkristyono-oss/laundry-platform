@@ -7,6 +7,7 @@ import { AuthLayout } from "@/components/layout/AuthLayout";
 import { Field, Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { apiFetch, ApiError } from "@/lib/api";
+import { setStaffSession } from "@/lib/auth";
 
 // POST /api/v1/auth/login — docs/07-api-contract.md §1 (staff/admin, distinct
 // from customer-auth per ADR-013 in docs/14-architecture-decisions.md).
@@ -29,11 +30,17 @@ export default function StaffLoginPage() {
     setLoading(true);
     setError(null);
     try {
-      await apiFetch<LoginResponse>("/api/v1/auth/login", {
+      const res = await apiFetch<LoginResponse>("/api/v1/auth/login", {
         method: "POST",
+        auth: "none",
         body: JSON.stringify({ identifier, password }),
       });
-      router.push("/");
+      setStaffSession({
+        accessToken: res.access_token,
+        refreshToken: res.refresh_token,
+        user: res.user,
+      });
+      router.push("/staff");
     } catch (err) {
       setError(
         err instanceof ApiError

@@ -313,7 +313,19 @@ func (h *Handler) ListOrders(w http.ResponseWriter, r *http.Request) {
 		return "$" + strconv.Itoa(len(args))
 	}
 
-	if v := q.Get("customer_id"); v != "" {
+	// A CUSTOMER principal is always scoped to their own orders
+	// (docs/07-api-contract.md §8: "customer may fetch own orders only")
+	// — any client-supplied customer_id is ignored in favor of the one
+	// resolved from the authenticated principal, so a customer can never
+	// list another customer's orders by guessing an id.
+	if principal.Type == "CUSTOMER" {
+		customerID, err := h.customerIDForIdentityAccount(r.Context(), principal.ID)
+		if err != nil {
+			respond.JSON(w, http.StatusOK, map[string]any{"data": []orderResponse{}})
+			return
+		}
+		conditions = append(conditions, "customer_id = "+arg(customerID))
+	} else if v := q.Get("customer_id"); v != "" {
 		conditions = append(conditions, "customer_id = "+arg(v))
 	}
 	if v := q.Get("outlet_id"); v != "" {
@@ -681,16 +693,32 @@ func (h *Handler) activePriceTx(ctx context.Context, tx pgx.Tx, serviceID, outle
 	return price, err
 }
 
+// canAccessOrder implements the ownership check from
+// docs/07-api-contract.md §8 ("customer may fetch own orders only").
+// A CUSTOMER principal's JWT subject is its `customer_accounts.id`
+// (docs/06-database-schema.md §1.9); Core only knows the inverse link
+// (`customers.identity_account_id`), so it resolves that customer's
+// `customers.id` and compares it against the order's owner.
 func (h *Handler) canAccessOrder(r *http.Request, order orderResponse) bool {
 	principal := httpauth.FromRequest(r)
 	switch principal.Type {
 	case "STAFF":
 		return principal.CanAccessOutlet(order.CurrentOutletID)
 	case "CUSTOMER":
-		return false // resolved by CustomerID vs principal's linked customer_id — TODO(phase-2+): wire once /customer-auth/me exposes customer_id here too.
+		customerID, err := h.customerIDForIdentityAccount(r.Context(), principal.ID)
+		if err != nil {
+			return false
+		}
+		return customerID == order.CustomerID
 	default:
 		return false
 	}
+}
+
+func (h *Handler) customerIDForIdentityAccount(ctx context.Context, identityAccountID string) (string, error) {
+	var id string
+	err := h.Pool.QueryRow(ctx, `SELECT id FROM customers WHERE identity_account_id = $1`, identityAccountID).Scan(&id)
+	return id, err
 }
 
 func (h *Handler) fetchOrder(ctx context.Context, id string) (orderResponse, error) {

@@ -7,6 +7,7 @@ import { AuthLayout } from "@/components/layout/AuthLayout";
 import { Field, Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { apiFetch, ApiError } from "@/lib/api";
+import { setCustomerSession } from "@/lib/auth";
 
 // POST /api/v1/customer-auth/register — docs/07-api-contract.md §2 (UQ-03 resolution).
 type RegisterResponse = {
@@ -30,11 +31,17 @@ export default function CustomerRegisterPage() {
     setLoading(true);
     setError(null);
     try {
-      await apiFetch<RegisterResponse>("/api/v1/customer-auth/register", {
+      const res = await apiFetch<RegisterResponse>("/api/v1/customer-auth/register", {
         method: "POST",
+        auth: "none",
         body: JSON.stringify({ name, phone, email: email || undefined, password }),
       });
-      router.push("/");
+      setCustomerSession({
+        accessToken: res.access_token,
+        refreshToken: res.refresh_token,
+        customer: res.customer,
+      });
+      router.push("/dashboard");
     } catch (err) {
       setError(
         err instanceof ApiError

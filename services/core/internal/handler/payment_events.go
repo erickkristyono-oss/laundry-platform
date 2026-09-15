@@ -48,16 +48,25 @@ func (h *Handler) handlePaymentEvent(ctx context.Context, d amqp.Delivery) {
 		return
 	}
 
+	// payment_status is a monotonic-ish projection (UNPAID -> PENDING ->
+	// PAID/FAILED -> REFUNDED). payment.created and payment.paid are
+	// written in the same DB transaction on Payment's side (docs/08-event-contract.md),
+	// so they share an identical created_at and the outbox relay/broker
+	// give no ordering guarantee for that tie — verified in practice: a
+	// payment.created processed *after* payment.paid was silently
+	// clobbering PAID back to PENDING. Each case below only writes when
+	// the current status is still "behind" it, so processing them in
+	// either order converges on the same correct final state.
 	var err error
 	switch env.EventType {
 	case "payment.created":
-		err = h.projectPaymentStatus(ctx, env, "PENDING")
+		err = h.projectPaymentStatusIf(ctx, env, "PENDING", []string{"UNPAID"})
 	case "payment.paid":
 		err = h.handlePaymentPaid(ctx, env)
 	case "payment.failed":
-		err = h.projectPaymentStatus(ctx, env, "FAILED")
+		err = h.projectPaymentStatusIf(ctx, env, "FAILED", []string{"UNPAID", "PENDING"})
 	case "payment.refunded":
-		err = h.projectPaymentStatus(ctx, env, "REFUNDED")
+		err = h.projectPaymentStatusIf(ctx, env, "REFUNDED", []string{"PAID"})
 	}
 
 	if err != nil {
@@ -68,7 +77,10 @@ func (h *Handler) handlePaymentEvent(ctx context.Context, d amqp.Delivery) {
 	_ = d.Ack(false)
 }
 
-func (h *Handler) projectPaymentStatus(ctx context.Context, env outbox.Envelope, status string) error {
+// projectPaymentStatusIf writes status only if the order's current
+// payment_status is one of fromStatuses — see the ordering note in
+// handlePaymentEvent above for why this guard exists.
+func (h *Handler) projectPaymentStatusIf(ctx context.Context, env outbox.Envelope, status string, fromStatuses []string) error {
 	orderID, ok := extractOrderID(env)
 	if !ok {
 		return nil
@@ -80,7 +92,10 @@ func (h *Handler) projectPaymentStatus(ctx context.Context, env outbox.Envelope,
 	}
 	defer tx.Rollback(ctx)
 
-	if _, err := tx.Exec(ctx, `UPDATE orders SET payment_status = $1, updated_at = now() WHERE id = $2`, status, orderID); err != nil {
+	if _, err := tx.Exec(ctx, `
+		UPDATE orders SET payment_status = $1, updated_at = now()
+		WHERE id = $2 AND payment_status = ANY($3)
+	`, status, orderID, fromStatuses); err != nil {
 		return err
 	}
 	if err := markEventProcessed(ctx, tx, env.EventID.String()); err != nil {
