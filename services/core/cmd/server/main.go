@@ -1,10 +1,6 @@
 // Command server runs the Core Service (docs/04-service-boundaries.md §3):
-// customers, outlets, catalog/pricing, tax rate (UQ-09), and the full order
-// lifecycle including the UQ-05 administrative payment-gate override.
-//
-// Phase 1 technical-foundation scaffolding only — see the note in
-// services/identity/cmd/server/main.go. Business handlers
-// (docs/07-api-contract.md §4-9) are a Phase 2 concern.
+// customers, outlets, catalog/pricing, tax rate (UQ-09), and the order
+// lifecycle.
 package main
 
 import (
@@ -17,9 +13,9 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	amqp "github.com/rabbitmq/amqp091-go"
 
 	"laundry-platform/services/core/internal/config"
+	"laundry-platform/services/core/internal/handler"
 	"laundry-platform/services/core/migrations"
 	"laundry-platform/shared/broker"
 	"laundry-platform/shared/health"
@@ -53,6 +49,11 @@ func main() {
 		os.Exit(1)
 	}
 
+	if err := handler.EnsureSeedCatalog(ctx, pool, logger); err != nil {
+		logger.Error("failed to bootstrap seed catalog", slog.Any("error", err))
+		os.Exit(1)
+	}
+
 	redisClient, err := redisutil.NewClient(ctx, cfg.RedisAddr)
 	if err != nil {
 		logger.Warn("redis unavailable at startup; pricing/outlet cache degraded", slog.Any("error", err))
@@ -78,10 +79,10 @@ func main() {
 	relay := outbox.NewRelay(pool, publisher, "core-service", logger)
 	go relay.Run(ctx)
 
-	// Consume payment.* to drive orders.payment_status projection
-	// (docs/04-service-boundaries.md §3, docs/06-database-schema.md §2.7
-	// "Why payment_status lives on orders"). Projection logic itself is a
-	// Phase 2 concern; this scaffold only wires the subscription.
+	h := handler.New(pool, cfg, logger)
+
+	// Consume payment.* to drive orders.payment_status and the
+	// system-triggered WEIGHING -> WASHING transition (docs/04-service-boundaries.md §3).
 	if err := conn.DeclareTopicExchange("payment.events"); err != nil {
 		logger.Error("failed to declare payment.events exchange", slog.Any("error", err))
 		os.Exit(1)
@@ -93,7 +94,7 @@ func main() {
 		logger.Error("failed to declare core.payment-events queue", slog.Any("error", err))
 		os.Exit(1)
 	}
-	go consumePaymentEvents(ctx, deliveries, logger)
+	go h.ConsumePaymentEvents(ctx, deliveries)
 
 	m := metrics.New(serviceName)
 
@@ -109,9 +110,10 @@ func main() {
 	}))
 	r.Handle("/metrics", metrics.Handler())
 
-	// TODO(phase-2): mount /api/v1/customers, /outlets, /services, /pricing,
-	// /settings/tax-rate, /orders, /pickups, /deliveries per
-	// docs/07-api-contract.md §4-9.
+	h.Mount(r)
+	// TODO(phase-2+): mount /api/v1/orders/{id}/transfer, /pickups,
+	// /deliveries, and the UQ-05 override endpoint — secondary features
+	// deferred per the "core flow first" prioritization.
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
@@ -132,24 +134,6 @@ func main() {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(shutdownCtx)
-}
-
-func consumePaymentEvents(ctx context.Context, deliveries <-chan amqp.Delivery, logger *slog.Logger) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case d, ok := <-deliveries:
-			if !ok {
-				return
-			}
-			logger.Info("received payment event", slog.String("routing_key", d.RoutingKey))
-			// TODO(phase-2): idempotent projection update per
-			// docs/06-database-schema.md §6 consumer-idempotency contract
-			// (dedup on event_id before writing orders.payment_status).
-			_ = d.Ack(false)
-		}
-	}
 }
 
 func parseLevel(level string) slog.Level {

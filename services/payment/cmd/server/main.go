@@ -2,10 +2,6 @@
 // payments, payment_transactions, refunds — isolated for compliance/integrity
 // (docs/14-architecture-decisions.md ADR-011), verifying order totals
 // synchronously against Core rather than trusting client input.
-//
-// Phase 1 technical-foundation scaffolding only — see the note in
-// services/identity/cmd/server/main.go. Business handlers
-// (docs/07-api-contract.md §11-12) are a Phase 2 concern.
 package main
 
 import (
@@ -20,6 +16,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"laundry-platform/services/payment/internal/config"
+	"laundry-platform/services/payment/internal/handler"
 	"laundry-platform/services/payment/migrations"
 	"laundry-platform/shared/broker"
 	"laundry-platform/shared/health"
@@ -92,9 +89,9 @@ func main() {
 	}))
 	r.Handle("/metrics", metrics.Handler())
 
-	// TODO(phase-2): mount /api/v1/payments, /api/v1/refunds per
-	// docs/07-api-contract.md §11-12, including the synchronous
-	// order-total verification call to cfg.CoreServiceURL.
+	handler.New(pool, cfg, logger).Mount(r)
+	// TODO(phase-2+): mount /api/v1/refunds per docs/07-api-contract.md §12
+	// — a secondary feature deferred per the "core flow first" prioritization.
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,

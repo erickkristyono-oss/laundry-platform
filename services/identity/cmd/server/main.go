@@ -1,12 +1,6 @@
 // Command server runs the Identity Service (docs/04-service-boundaries.md §2):
 // staff authN/authZ primitives and, per the UQ-03 resolution, customer
 // self-service authentication.
-//
-// This is Phase 1 "technical foundation" scaffolding: process wiring,
-// health/readiness/metrics, DB/broker/cache connections, and the outbox
-// relay. Business handlers (docs/07-api-contract.md §1-3) are a Phase 2
-// concern and are not implemented here, per the Master Prompt's
-// architecture-first sequencing.
 package main
 
 import (
@@ -21,6 +15,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"laundry-platform/services/identity/internal/config"
+	"laundry-platform/services/identity/internal/handler"
 	"laundry-platform/services/identity/migrations"
 	"laundry-platform/shared/broker"
 	"laundry-platform/shared/health"
@@ -51,6 +46,11 @@ func main() {
 
 	if err := migrator.Up(ctx, pool, migrations.FS); err != nil {
 		logger.Error("failed to apply migrations", slog.Any("error", err))
+		os.Exit(1)
+	}
+
+	if err := handler.EnsureDefaultOwner(ctx, pool, logger); err != nil {
+		logger.Error("failed to bootstrap default owner", slog.Any("error", err))
 		os.Exit(1)
 	}
 
@@ -93,8 +93,10 @@ func main() {
 	}))
 	r.Handle("/metrics", metrics.Handler())
 
-	// TODO(phase-2): mount /api/v1/auth/* and /api/v1/customer-auth/* and
-	// /api/v1/users/* handlers here per docs/07-api-contract.md §1-3.
+	handler.New(pool, cfg, logger).Mount(r)
+	// TODO(phase-2+): mount /api/v1/users/* (staff management) per
+	// docs/07-api-contract.md §3 — not needed for the core order-to-cash
+	// flow; the default OWNER bootstrap above covers first login.
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,

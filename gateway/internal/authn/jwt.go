@@ -1,7 +1,9 @@
 // Package authn implements the Gateway's coarse authentication check
-// (docs/09-rbac.md §3): validate the bearer token's signature/expiry and
-// forward the principal as trusted internal headers, never trusting any
-// client-supplied version of those same headers (docs/09-rbac.md §4.1).
+// (docs/09-rbac.md §3): validate the bearer token's signature/expiry
+// (via shared/authtoken — the same package Identity uses to issue it, so
+// the two can never disagree on token shape) and forward the principal as
+// trusted internal headers, never trusting any client-supplied version of
+// those same headers (docs/09-rbac.md §4.1).
 //
 // Fine-grained authorization (permission checks, outlet-scope checks) is
 // deliberately NOT done here — it happens again at the service layer, per
@@ -13,27 +15,21 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/golang-jwt/jwt/v5"
-
+	"laundry-platform/shared/authtoken"
+	"laundry-platform/shared/httpauth"
 	"laundry-platform/shared/respond"
 )
 
+// Re-exported so existing call sites (main.go's CORS header allow-list,
+// tests) can keep referencing authn.HeaderX — the values live in
+// shared/httpauth so every service (which cannot import the Gateway's
+// internal package) agrees with the Gateway on the exact same names.
 const (
-	HeaderPrincipalType = "X-Principal-Type" // "STAFF" or "CUSTOMER" (docs/06-database-schema.md §1.9, ADR-013)
-	HeaderPrincipalID   = "X-Principal-ID"
-	HeaderRoles         = "X-Roles"      // comma-joined staff role codes; empty for customers
-	HeaderOutletIDs     = "X-Outlet-Ids" // comma-joined; empty means GLOBAL scope (OWNER/SUPER_ADMIN)
+	HeaderPrincipalType = httpauth.HeaderPrincipalType
+	HeaderPrincipalID   = httpauth.HeaderPrincipalID
+	HeaderRoles         = httpauth.HeaderRoles
+	HeaderOutletIDs     = httpauth.HeaderOutletIDs
 )
-
-// Claims is the access-token payload shape. Both staff and customer tokens
-// use this same shape; PrincipalType distinguishes them (ADR-013 — a
-// customer token never carries staff Roles).
-type Claims struct {
-	jwt.RegisteredClaims
-	PrincipalType string   `json:"principal_type"`
-	Roles         []string `json:"roles,omitempty"`
-	OutletIDs     []string `json:"outlet_ids,omitempty"`
-}
 
 // Authenticate validates a bearer token if one is present. A request with
 // no Authorization header is passed through unauthenticated — whether a
@@ -66,11 +62,8 @@ func Authenticate(signingKey string) func(http.Handler) http.Handler {
 				return
 			}
 
-			claims := &Claims{}
-			token, err := jwt.ParseWithClaims(tokenString, claims, func(t *jwt.Token) (any, error) {
-				return []byte(signingKey), nil
-			}, jwt.WithValidMethods([]string{"HS256"}))
-			if err != nil || !token.Valid {
+			claims, err := authtoken.Parse(signingKey, tokenString)
+			if err != nil {
 				respond.Error(w, r, http.StatusUnauthorized, "INVALID_TOKEN", "The access token is invalid or expired.")
 				return
 			}

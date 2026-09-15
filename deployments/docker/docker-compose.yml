@@ -55,6 +55,8 @@ services:
       REDIS_ADDR: redis:6379
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       LOG_LEVEL: info
+      JWT_SIGNING_KEY: dev-only-insecure-key-change-me
+      CORE_SERVICE_URL: http://core:8082
     ports:
       - "18081:8081"
     depends_on:
