@@ -161,5 +161,16 @@ services:
       - notification
       - reporting
 
+  web:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile.web
+      args:
+        NEXT_PUBLIC_API_BASE_URL: http://localhost:8080
+    ports:
+      - "3000:3000"
+    depends_on:
+      - gateway
+
 volumes:
   pg_data:

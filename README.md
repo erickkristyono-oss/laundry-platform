@@ -11,10 +11,12 @@ covers Phase 1: the technical foundation that runs against that spec.
   cross-referenced and consistent (see `docs/PHASE-0-REVIEW.md` §5, §8).
 - **Phase 1 (technical foundation, this scaffold):** monorepo, 5 Go
   services + Gateway, PostgreSQL migrations, RabbitMQ/Redis wiring, Docker
-  Compose, CI. **No business logic/handlers yet** — every service exposes
-  only `/healthz`, `/readyz`, `/metrics` today; the `TODO(phase-2)` comments
-  in each `cmd/server/main.go` mark where `docs/07-api-contract.md`'s
-  handlers attach next.
+  Compose, CI, and a Next.js frontend shell. **No backend business
+  logic/handlers yet** — every Go service exposes only `/healthz`,
+  `/readyz`, `/metrics` today; the `TODO(phase-2)` comments in each
+  `cmd/server/main.go` mark where `docs/07-api-contract.md`'s handlers
+  attach next. The frontend's auth forms already call the correct Gateway
+  endpoints and degrade gracefully until those handlers exist.
 
 ## Layout
 
@@ -24,7 +26,7 @@ gateway/                                                   API Gateway (Go modul
 shared/                                                     cross-cutting plumbing only (see docs/03-system-architecture.md §4)
 deployments/docker/                                         Dockerfiles + docker-compose.yml
 docs/                                                        Phase 0 architecture (source of truth)
-web/                                                         Next.js frontend (not yet scaffolded)
+web/                                                         Next.js (App Router, TypeScript, Tailwind v4) customer/staff frontend
 ```
 
 Each service is an independent Go module (own `go.mod`, own migrations,
@@ -51,9 +53,33 @@ Each service applies its own migrations automatically on startup. Ports:
 | Payment | 8083 | 18083 |
 | Notification | 8084 | 18084 |
 | Reporting | 8085 | 18085 |
+| Web | 3000 | 3000 |
 
 Postgres (5432), RabbitMQ (5672, management UI 15672), Redis (6379) are also
 exposed on their standard ports for local inspection.
+
+## Frontend (`web/`)
+
+Next.js 16 (App Router, TypeScript, Tailwind v4). Brand palette and copy are
+centralized in `web/lib/site.ts` and the `@theme` block in
+`web/app/globals.css` — rename the brand there, not by hunting through
+components. Structure:
+
+```
+web/app/                     routes: / (landing), /login, /register, /staff/login
+web/components/ui/           brand-agnostic primitives (Button, Input, Container, WaveDivider, Logo)
+web/components/layout/       Navbar, Footer, AuthLayout, WhatsAppButton
+web/components/sections/     landing page sections (Hero, Services, HowItWorks, WhyUs, ...)
+web/lib/                     site.ts (brand config), api.ts (Gateway fetch wrapper)
+```
+
+Auth forms call the Gateway directly (`/api/v1/auth/*` for staff,
+`/api/v1/customer-auth/*` for customers per `docs/07-api-contract.md` §1–2)
+and show a friendly error if it's unreachable — expected until Phase 2 lands.
+
+```bash
+cd web && cp .env.local.example .env.local && npm install && npm run dev
+```
 
 ## Development
 

@@ -1,0 +1,43 @@
+@import "tailwindcss";
+
+/*
+ * Brand palette — sampled from the design reference (laundrydry.com):
+ * sky-blue primary, dark navy for icon badges/footer, warm red for
+ * attention copy, green reserved for WhatsApp-style CTAs.
+ * Centralized here as semantic tokens (not raw Tailwind color names) so
+ * a future rebrand only touches this block.
+ */
+@theme {
+  --color-brand-50: #f0f9ff;
+  --color-brand-100: #e0f2fe;
+  --color-brand-200: #bae6fd;
+  --color-brand-300: #7dd3fc;
+  --color-brand-400: #38bdf8;
+  --color-brand-500: #0ea5e9;
+  --color-brand-600: #0284c7;
+  --color-brand-700: #0369a1;
+  --color-brand-800: #075985;
+  --color-brand-900: #0c4a6e;
+
+  --color-navy-800: #232b5e;
+  --color-navy-900: #18204e;
+  --color-navy-950: #0f1433;
+
+  --font-sans: var(--font-inter);
+  --font-heading: var(--font-poppins);
+}
+
+:root {
+  --background: #ffffff;
+  --foreground: #1f2937;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+}
+
+/* Wave divider used between sections, mirroring the reference site's
+   curved section breaks. Applied as a background-image mask via a
+   dedicated component (components/ui/WaveDivider.tsx) rather than here. */
