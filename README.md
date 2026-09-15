@@ -12,19 +12,22 @@ covers Phase 1: the technical foundation that runs against that spec.
 - **Phase 1 (technical foundation):** complete. Monorepo, 5 Go services +
   Gateway, PostgreSQL migrations, RabbitMQ/Redis wiring, Docker Compose,
   CI, and a Next.js frontend shell.
-- **Phase 2 (business logic), core flow — working end-to-end:** customer
-  register/login, staff login, order creation (guest upsert-by-phone,
-  outlet auto-recommend, price snapshot), receive → weigh → finalize
-  weighing → cash payment (synchronously verified against Core) →
-  event-driven `WEIGHING → WASHING` over RabbitMQ → staff-driven
-  `DRYING → IRONING → PACKING → READY → PICKED_UP/DELIVERED → COMPLETED`
-  (blocked unless paid, per BR-02). Verified live via `make up` + curl.
+- **Phase 2 (business logic), core flow — working end-to-end, in the
+  browser, not just curl:** customer register/login, staff login, order
+  creation (guest upsert-by-phone, outlet auto-recommend, price snapshot),
+  receive → weigh → finalize weighing → cash payment (synchronously
+  verified against Core) → event-driven `WEIGHING → WASHING` over
+  RabbitMQ → staff-driven `DRYING → IRONING → PACKING → READY →
+  PICKED_UP/DELIVERED → COMPLETED` (blocked unless paid, per BR-02).
+  Idempotency-Key deduplication (docs/11-error-handling.md §4) is wired
+  on register/order-creation/payment-creation. The frontend
+  (customer dashboard + order form + status timeline, staff console with
+  per-status actions) drives all of this directly against the Gateway.
   **Not yet built** (secondary features, each marked `TODO(phase-2+)` at
   its call site): refunds, pickup/delivery requests, order transfer, the
-  UQ-05 administrative payment-gate override, staff user management,
-  Idempotency-Key deduplication, reporting projections, and notification
-  rendering. The frontend's auth forms already work against the real
-  Identity endpoints; order/payment UI is not yet wired up.
+  UQ-05 administrative payment-gate override, staff user management, a
+  key-expiry cleanup job, reporting projections, and notification
+  rendering.
 
 ## Layout
 
@@ -72,27 +75,37 @@ loudly to stdout, local-dev only, never for a shared environment:
 - Identity: one `OWNER` account, `owner@laundryku.local` / `ChangeMe123!`.
 - Core: one outlet (`OUT-001`) and one service (`Cuci Kiloan`, Rp 7.000/kg).
 
-Try the core flow with curl (Gateway at `localhost:8080`):
+Try the core flow with curl (Gateway at `localhost:8080`) or, easier, just
+use the frontend below — both drive the same endpoints. Idempotency-Key
+is required on register/order-creation/payment-creation:
 ```bash
-curl -X POST localhost:8080/api/v1/customer-auth/register -d '{"name":"Budi","phone":"0812xxxx","password":"password123"}'
+curl -X POST localhost:8080/api/v1/customer-auth/register -H "Idempotency-Key: $(uuidgen)" -d '{"name":"Budi","phone":"0812xxxx","password":"password123"}'
 curl -X POST localhost:8080/api/v1/auth/login -d '{"identifier":"owner@laundryku.local","password":"ChangeMe123!"}'
 # then POST /api/v1/orders, /status (RECEIVED), PUT .../weigh, POST .../finalize-weighing, POST /api/v1/payments ...
 ```
 
 ## Frontend (`web/`)
 
-Next.js 16 (App Router, TypeScript, Tailwind v4). Brand palette and copy are
-centralized in `web/lib/site.ts` and the `@theme` block in
-`web/app/globals.css` — rename the brand there, not by hunting through
-components. Structure:
+Next.js 16 (App Router, TypeScript, Tailwind v4), talking directly to the
+Gateway — no BFF layer. Brand palette and copy are centralized in
+`web/lib/site.ts` and the `@theme` block in `web/app/globals.css` — rename
+the brand there, not by hunting through components. Structure:
 
 ```
-web/app/                     routes: / (landing), /login, /register, /staff/login
-web/components/ui/           brand-agnostic primitives (Button, Input, Container, WaveDivider, Logo)
-web/components/layout/       Navbar, Footer, AuthLayout, WhatsAppButton
-web/components/sections/     landing page sections (Hero, Services, HowItWorks, WhyUs, ...)
-web/lib/                     site.ts (brand config), api.ts (Gateway fetch wrapper)
+web/app/               marketing (/), customer auth (/login, /register), customer
+                        (/dashboard, /order/new, /orders/[id]), staff (/staff/login,
+                        /staff, /staff/orders/[id])
+web/components/ui/     brand-agnostic primitives (Button, Input, Container, WaveDivider, Logo)
+web/components/layout/ Navbar (session-aware via useSyncExternalStore), Footer, AuthLayout
+web/components/order/  StatusBadge, StatusTimeline, OrderCard — shared by customer & staff views
+web/lib/                site.ts (brand config), api.ts (Gateway fetch wrapper — attaches the
+                        bearer token and an auto-generated Idempotency-Key), auth.ts (session
+                        storage), useSession.ts (redirect-if-logged-out hooks)
 ```
+
+Customer and staff sessions are independent (separate localStorage keys,
+separate token audiences per ADR-013) — you can be logged in as both at
+once in the same browser, e.g. to test the flow solo.
 
 Auth forms call the Gateway directly (`/api/v1/auth/*` for staff,
 `/api/v1/customer-auth/*` for customers per `docs/07-api-contract.md` §1–2)
