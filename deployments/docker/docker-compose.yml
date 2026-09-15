@@ -1,0 +1,165 @@
+# Local development topology per docs/03-system-architecture.md §5:
+# one Postgres instance (5 logical databases), one RabbitMQ, one Redis,
+# one container per service + gateway. Run from the repo root:
+#   docker compose -f deployments/docker/docker-compose.yml up --build
+name: laundry-platform
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./postgres/init-databases.sh:/docker-entrypoint-initdb.d/init-databases.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    ports:
+      - "5672:5672"
+      - "15672:15672" # management UI
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  identity:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile.service
+      args:
+        SERVICE: identity
+    environment:
+      PORT: "8081"
+      DATABASE_URL: postgres://identity:identity@postgres:5432/identity_db?sslmode=disable
+      REDIS_ADDR: redis:6379
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      LOG_LEVEL: info
+    ports:
+      - "18081:8081"
+    depends_on:
+      postgres: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
+  core:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile.service
+      args:
+        SERVICE: core
+    environment:
+      PORT: "8082"
+      DATABASE_URL: postgres://core:core@postgres:5432/core_db?sslmode=disable
+      REDIS_ADDR: redis:6379
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      LOG_LEVEL: info
+    ports:
+      - "18082:8082"
+    depends_on:
+      postgres: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
+  payment:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile.service
+      args:
+        SERVICE: payment
+    environment:
+      PORT: "8083"
+      DATABASE_URL: postgres://payment:payment@postgres:5432/payment_db?sslmode=disable
+      REDIS_ADDR: redis:6379
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      LOG_LEVEL: info
+      CORE_SERVICE_URL: http://core:8082
+    ports:
+      - "18083:8083"
+    depends_on:
+      postgres: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      core: { condition: service_started }
+
+  notification:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile.service
+      args:
+        SERVICE: notification
+    environment:
+      PORT: "8084"
+      DATABASE_URL: postgres://notification:notification@postgres:5432/notification_db?sslmode=disable
+      REDIS_ADDR: redis:6379
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      LOG_LEVEL: info
+    ports:
+      - "18084:8084"
+    depends_on:
+      postgres: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
+  reporting:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile.service
+      args:
+        SERVICE: reporting
+    environment:
+      PORT: "8085"
+      DATABASE_URL: postgres://reporting:reporting@postgres:5432/reporting_db?sslmode=disable
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      LOG_LEVEL: info
+    ports:
+      - "18085:8085"
+    depends_on:
+      postgres: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+
+  gateway:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile.gateway
+    environment:
+      PORT: "8080"
+      REDIS_ADDR: redis:6379
+      JWT_SIGNING_KEY: dev-only-insecure-key-change-me
+      IDENTITY_UPSTREAM: http://identity:8081
+      CORE_UPSTREAM: http://core:8082
+      PAYMENT_UPSTREAM: http://payment:8083
+      REPORTING_UPSTREAM: http://reporting:8085
+      ALLOWED_ORIGIN: http://localhost:3000
+      LOG_LEVEL: info
+    ports:
+      - "8080:8080"
+    depends_on:
+      - identity
+      - core
+      - payment
+      - notification
+      - reporting
+
+volumes:
+  pg_data:

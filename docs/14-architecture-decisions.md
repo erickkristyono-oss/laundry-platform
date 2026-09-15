@@ -1,0 +1,101 @@
+# 14 — Architecture Decision Records
+
+> Renumbered from the initial `13-architecture-decisions.md` to `14-architecture-decisions.md` to accommodate the dedicated `13-observability.md` required by the current Master Prompt. Content is unchanged except for the addition of ADR-005 (Redis) and the renumbering of the former ADR-009 (Global Pricing) to ADR-012, matching the Master Prompt's §30 list exactly (ADR-001 through ADR-012).
+
+## ADR-001: Microservice Architecture
+
+- **Context:** Multi-outlet laundry platform with distinct concerns (identity, order/catalog, payment, notification, reporting) that have different change cadences (pricing/catalog changes often; identity rarely) and different data-sensitivity/compliance profiles (payment vs. everything else).
+- **Decision:** Adopt a microservice architecture with five services (Identity, Core, Payment, Notification, Reporting), each with its own database and independent deployability.
+- **Alternatives considered:** (a) Modular monolith — single deployable, single DB with logical schemas. (b) Fine-grained microservices — split Core further into Order/Catalog/Outlet services.
+- **Consequences:** + Independent scaling/deployment, clear ownership, payment isolated for compliance. − Operational overhead (5 services vs. 1), requires the Outbox Pattern and eventual consistency discipline, more infrastructure (RabbitMQ, service-to-service auth) than a monolith would need. Mitigated by keeping Core intentionally coarse-grained (see ADR-010).
+
+## ADR-002: Monorepo
+
+- **Context:** Five backend services + gateway + frontend + shared docs need coordinated versioning, especially during Phase 0→1 bootstrapping by a small team.
+- **Decision:** Single monorepo (`laundry-platform/`) housing all services, gateway, web app, shared plumbing, deployment manifests, and docs.
+- **Alternatives considered:** Polyrepo (one repo per service).
+- **Consequences:** + Atomic cross-cutting changes (e.g., updating an event schema and its consumers in one PR/review), single CI configuration to start, easier onboarding. − Requires discipline (via `04-service-boundaries.md` rules) to prevent the monorepo from encouraging accidental coupling (e.g., importing another service's internal package). Mitigated by per-service Go modules and a `shared/` allow-list (`03-system-architecture.md` §4).
+
+## ADR-003: PostgreSQL
+
+- **Context:** Need a relational store with strong consistency guarantees for financial data (orders, payments), rich constraint support (CHECK, partial unique indexes), and JSONB for semi-structured event/audit payloads.
+- **Decision:** PostgreSQL for all five logical databases.
+- **Alternatives considered:** MySQL (weaker partial/expression index support historically), a NoSQL store (insufficient transactional/constraint guarantees for payment integrity rules).
+- **Consequences:** + ACID transactions per service, partial unique indexes enforce BR-06/BR-005 at the DB layer, mature Go driver ecosystem (`pgx`). − Requires the team to actively avoid the temptation to cross-join across logical databases just because they may physically colocate in dev.
+
+## ADR-004: RabbitMQ
+
+- **Context:** Need reliable asynchronous domain-event delivery between services (order/payment facts to Notification/Reporting; payment facts back to Core) with the Outbox Pattern.
+- **Decision:** RabbitMQ as the message broker, topic exchanges per producer, durable queues per consumer.
+- **Alternatives considered:** Kafka (higher operational complexity and overkill for this event volume at MVP scale; better fit for high-throughput log-style streaming), direct HTTP webhooks between services (no durability/replay, tighter coupling).
+- **Consequences:** + Simple operational model, built-in DLX support for poison-message handling, publisher confirms integrate cleanly with the Outbox relay. − No long-term log retention/replay like Kafka out of the box — Reporting's ability to "replay from the beginning" depends on the Outbox tables' retention window, not RabbitMQ's, which is an accepted trade-off at this scale.
+
+## ADR-005: Redis
+
+- **Context:** Several cross-cutting needs are latency-sensitive and don't require durability as a system of record: session/refresh-token lookups at the Gateway, rate-limit counters, and read-through caching of hot, rarely-changing data (active global/outlet pricing, outlet directory) to avoid hammering `core_db` on every order-estimate page view.
+- **Decision:** Redis as a shared-pattern (but key-namespaced per service — `identity:*`, `core:*`, `gateway:*`) in-memory store for cache and rate-limiting; never used as a system of record for business data.
+- **Alternatives considered:** In-process memory cache per service instance (rejected — doesn't work correctly for rate limiting or session lookups once there is more than one instance of a service, since counters/state would be inconsistent across instances); Memcached (rejected — Redis's richer data structures, e.g., sorted sets for sliding-window rate limiting, and built-in TTL semantics fit this system's needs better with only one extra piece of infrastructure instead of two caching technologies).
+- **Consequences:** + Sub-millisecond reads for hot paths, natural TTL for rate-limit windows and cache entries, one well-understood piece of infrastructure serving multiple cross-cutting needs. − Introduces a stateful dependency that, if unavailable, degrades (not fails outright, since it's cache/rate-limiting only, not a system of record) — Gateway rate limiting and session-claim caching need a defined fallback behavior (documented in `12-security-baseline.md`), and losing Redis must never be able to corrupt or lose business data, which the "never a system of record" rule guarantees by construction.
+
+## ADR-006: UUID for Internal Entity IDs
+
+- **Context:** IDs must be safe to generate independently across services without coordination (no shared sequence), must not leak sequential business volume (e.g., competitor inferring order count from an incrementing integer), and must work as event payload identifiers.
+- **Decision:** UUID (v4, via `gen_random_uuid()`) as the primary key for every table; separate human-readable business identifiers (`CUS-xxxxxx`/`CUS-000001`, `ORD-YYYYMMDD-xxxxxx`, `PAY-YYYYMMDD-xxxxxx`) generated by application code for customer/staff-facing display, stored as a unique non-PK column. Either a random suffix or a zero-padded sequence is an acceptable concrete implementation of the same convention; the requirement is only that the business identifier never replaces the UUID primary key.
+- **Alternatives considered:** Auto-increment BIGINT (simplest, but leaks volume and requires coordination in a distributed-ID future); ULID/Snowflake (better index locality than UUIDv4, but adds a dependency/complexity not justified at MVP scale — flagged as a future optimization if `orders` write volume makes UUIDv4 index bloat a measured problem).
+- **Consequences:** + No cross-service coordination needed to generate IDs, safe to embed in URLs/events. − Slightly worse B-tree index locality than sequential IDs; acceptable at MVP scale, revisit only if proven to matter under load.
+
+## ADR-007: Database-per-Service Boundary
+
+- **Context:** Need service independence and to prevent a distributed monolith where services are logically separate but share a database and thus can't evolve schemas independently.
+- **Decision:** Each service owns a logical database (`identity_db`, `core_db`, `payment_db`, `notification_db`, `reporting_db`); no service may query another's database directly; no cross-service foreign keys.
+- **Alternatives considered:** Shared single database with schema-level separation and shared foreign keys (rejected — this is precisely the distributed-monolith anti-pattern the Master Prompt explicitly warns against in §10's "HARD RULE").
+- **Consequences:** + True service independence, safe independent migrations. − Requires synchronous API calls or events for any cross-service data need (no convenient SQL join); requires eventual-consistency handling (e.g., `orders.payment_status` mirrors Payment Service state with a small propagation delay — see `10-state-machines.md` §2).
+
+## ADR-008: REST API
+
+- **Context:** Need a client-facing API contract consumable by a Next.js web app and a POS UI, well-understood by tooling (OpenAPI, codegen) and easy to reason about per-resource.
+- **Decision:** REST over HTTP/JSON, `/api/v1` prefix, OpenAPI-compatible contract (see `07-api-contract.md`).
+- **Alternatives considered:** GraphQL (more flexible client queries, but adds complexity — schema stitching across 5 services — not justified for a POS/website with well-known, stable query shapes); gRPC (better for service-to-service, weaker browser-native support for client-facing use).
+- **Consequences:** + Simple, cacheable, tooling-friendly, easy versioning via URL prefix. − Slight over/under-fetching compared to GraphQL, acceptable given the bounded, well-known set of client screens.
+
+## ADR-009: Transactional Outbox
+
+- **Context:** Must prevent the classic dual-write failure: a DB transaction commits but the corresponding event is never published (or vice versa), which would silently desynchronize services (e.g., an order marked created in Core but Notification never told). Explicitly called out in the Master Prompt §19 as a failure mode the architecture must prevent.
+- **Decision:** Every service that publishes events writes to its own `outbox_events` table in the same transaction as the domain write; a relay poller publishes to RabbitMQ and marks rows published, with retry and a dead-letter path for consumers.
+- **Alternatives considered:** Dual-write without outbox (rejected — has the exact failure mode this ADR exists to prevent); Change Data Capture (CDC) via Debezium reading the WAL (a valid stronger alternative, deferred as a Phase 1+ optimization — the outbox table shape is CDC-compatible if adopted later, so this is not a one-way door).
+- **Consequences:** + Guarantees at-least-once event delivery correlated atomically with the domain transaction. − Adds a background poller process per service and a small publish-latency delay (near-real-time, not instantaneous).
+
+## ADR-010: Core Service Ownership
+
+- **Context:** Master Prompt §9.2 explicitly warns against splitting Core into many smaller services (avoiding a distributed monolith) while still wanting clear bounded-context ownership.
+- **Decision:** Core Service owns customers, outlets, catalog/pricing, and the full order lifecycle (including pickup/delivery requests and transfers) as one cohesive bounded context.
+- **Alternatives considered:** Separate Order Service, Catalog Service, Outlet Service, Logistics Service (rejected for MVP — these concerns change together far more often than independently, and splitting them now would multiply cross-service calls for what is fundamentally one workflow: "an order moving through outlets and stages").
+- **Consequences:** + Fewer cross-service calls for the most frequent workflow in the system, simpler transactional consistency within a single bounded context. − Core Service is the largest/most complex service and the most likely future candidate for splitting if a specific sub-domain (e.g., logistics, once a driver app/GPS is introduced post-MVP) clearly outgrows the others in team size or deploy cadence.
+
+## ADR-011: Payment Service Ownership
+
+- **Context:** Payment integrity (BR-006, BR-005 in the Master Prompt's numbering; BR-05/BR-06/BR-07 in `01-business-rules.md`'s numbering) and refund workflow (BR-014/BR-16–19) require strict, auditable, isolated handling distinct from order orchestration, and likely different compliance requirements (PCI-adjacent) than the rest of the system.
+- **Decision:** Payment Service owns payments, payment_transactions, and refunds exclusively; it treats `order_id`/`customer_id`/`amount_due` as externally-supplied facts it independently verifies (via a synchronous read to Core) rather than owning or trusting them blindly.
+- **Alternatives considered:** Fold payment into Core Service (rejected — mixes compliance-sensitive financial data with general order data, and the payment-integrity rules benefit from a service whose only job is getting money handling exactly right).
+- **Consequences:** + Isolated blast radius for payment bugs/incidents, clear audit boundary, easier to apply stricter security controls to one service. − Order finalization now spans two services (Core + Payment) for the WEIGHING→WASHING transition, requiring the event-driven coordination documented in `10-state-machines.md` §4.
+
+## ADR-012: Global Pricing (with Outlet-Specific Extensibility)
+
+- **Context:** BR-007 (Master Prompt) / BR-08+BR-09 (`01-business-rules.md`) require global pricing today, with the data model required to support outlet-specific pricing later without a complete redesign.
+- **Decision:** `service_prices` includes a nullable `outlet_id` from day one. `NULL` = global (the only populated case at MVP). Resolution order at read time: outlet-specific row first, else global row.
+- **Alternatives considered:** Add `outlet_id` only when actually needed (rejected — this is exactly the "complete database redesign" BR-007 asks to avoid, since it would require a schema migration plus a data backfill plus a resolution-order change touching every price-reading code path simultaneously).
+- **Consequences:** + Zero-migration path to outlet-specific pricing (just insert rows). − A small amount of "unused optionality" in the schema at MVP launch (an acceptable, explicitly-justified exception to YAGNI given it's an explicit, authoritative requirement).
+
+## ADR-013: Customer Authentication as a Separate Credential Table (not a role on `users`)
+
+- **Context:** UQ-03 was resolved to require customer self-service login (password-based). The obvious shortcut — add customers as rows in Identity's existing `users` table with a `CUSTOMER` role — was rejected before it was built, because it would let a customer acquire staff permissions through the exact same `user_roles` mechanism that grants `SUPER_ADMIN`/`OWNER`/etc., turning a data-modeling convenience into a privilege-escalation surface that every future RBAC change would have to re-defend against.
+- **Decision:** Customers get their own table, `customer_accounts` (+ `customer_sessions`), in `identity_db`, structurally similar to `users`/`sessions` but with **zero relationship** to `roles`/`user_roles`/`user_outlets`. Tokens issued to a customer carry `principal_type=CUSTOMER` and are checked for that claim (not just signature validity) by every staff-only route at the Gateway.
+- **Alternatives considered:** (a) Reuse `users` with a `CUSTOMER` role (rejected, see Context). (b) Put customer credentials in Core's `customers` table directly (rejected — mixes a security-sensitive secret, the password hash, into a service/database that has no other reason to implement password hashing, rate limiting, or session revocation; Identity already owns that competency for staff and is the correct place to reuse it).
+- **Consequences:** + RBAC's staff role model stays provably closed to customers — a customer can never end up with a staff permission, by construction, not by convention. + Identity's existing password-hashing/session/rate-limiting machinery is reused rather than duplicated. − Two parallel principal tables/token shapes to maintain in Identity Service instead of one; mitigated by both sharing the same underlying session/token library, differing only in the claims table and audience claim.
+
+## ADR-014: Configurable, Versioned Tax Rate (not a hardcoded percentage)
+
+- **Context:** UQ-09 was resolved to activate PPN, but at 0% today because the business's annual turnover is below the Rp 500 juta/year PKP threshold, and is expected to change (to 11%/12%) once turnover crosses that threshold. A hardcoded rate (in config/env or application code) would require a code deploy to change a pure business-policy number, and — worse — would have no way to keep old orders' tax figures correct after the rate changed.
+- **Decision:** Model the tax rate exactly like `service_prices` (ADR-012): a versioned, admin-writable `tax_rates` table in `core_db`, with at most one currently-active row (`effective_to IS NULL`), read once at `finalize-weighing` time and copied into `orders.tax_rate_snapshot`/`tax_amount` — never re-read afterward. Changing the rate is a `PUT /api/v1/settings/tax-rate` call (`OWNER`/`SUPER_ADMIN` only), not a deploy.
+- **Alternatives considered:** (a) Env var / static config (rejected — requires a deploy for a business-policy change the Master Prompt explicitly frames as something the business, not engineering, controls; also can't preserve historical accuracy once changed). (b) Store the rate directly on `orders` without a separate versioned table (rejected — loses the audit trail of *when and why* the rate changed, and `PHASE-0-REVIEW.md`/BR-27 require the reason to be recorded).
+- **Consequences:** + Rate changes take effect immediately with no deploy, are fully audited (`created_by`, `reason`, `effective_from`), and never retroactively alter historical orders (BR-08's price-snapshot principle extended to tax). − One more small table and one more admin endpoint versus a config value; judged worth it since this is a figure a non-engineer (the business owner) must be able to change safely and on their own schedule.

@@ -1,0 +1,17 @@
+# Build with: docker build -f deployments/docker/Dockerfile.gateway -t laundry-gateway .
+# (build context must be the repo root.)
+FROM golang:1.25-alpine AS build
+ENV GOWORK=off
+WORKDIR /src
+
+COPY shared/ shared/
+COPY gateway/ gateway/
+
+WORKDIR /src/gateway
+RUN go build -o /out/server ./cmd/server
+
+FROM alpine:3.20
+RUN adduser -D -u 10001 appuser
+COPY --from=build /out/server /usr/local/bin/server
+USER appuser
+ENTRYPOINT ["/usr/local/bin/server"]

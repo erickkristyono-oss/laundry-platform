@@ -1,0 +1,17 @@
+# Go
+*.exe
+*.test
+*.out
+/bin/
+/dist/
+
+# Env
+.env
+.env.local
+
+# Editor/OS
+.DS_Store
+.idea/
+.vscode/
+
+# Docker volumes are managed by Docker itself, not the repo

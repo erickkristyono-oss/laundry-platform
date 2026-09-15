@@ -1,0 +1,24 @@
+# Generic multi-stage Dockerfile for any Go service in this monorepo.
+# Build with: docker build -f deployments/docker/Dockerfile.service \
+#   --build-arg SERVICE=identity -t laundry-identity .
+# (build context must be the repo root, since it needs go.work + shared/.)
+FROM golang:1.25-alpine AS build
+ARG SERVICE
+ENV GOWORK=off
+WORKDIR /src
+
+# go.work is intentionally NOT copied: each service's go.mod carries its own
+# `replace laundry-platform/shared => ../../shared` (docs/03-system-architecture.md §3),
+# so it builds standalone from just its own directory + shared/, without
+# needing every other service present in the build context.
+COPY shared/ shared/
+COPY services/${SERVICE}/ services/${SERVICE}/
+
+WORKDIR /src/services/${SERVICE}
+RUN go build -o /out/server ./cmd/server
+
+FROM alpine:3.20
+RUN adduser -D -u 10001 appuser
+COPY --from=build /out/server /usr/local/bin/server
+USER appuser
+ENTRYPOINT ["/usr/local/bin/server"]

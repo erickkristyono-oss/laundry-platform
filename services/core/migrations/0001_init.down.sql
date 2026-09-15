@@ -1,0 +1,16 @@
+DROP TABLE IF EXISTS outbox_events;
+DROP TABLE IF EXISTS delivery_requests;
+DROP TABLE IF EXISTS pickup_requests;
+DROP TABLE IF EXISTS order_transfers;
+DROP TABLE IF EXISTS order_status_history;
+DROP TRIGGER IF EXISTS trg_reject_locked_order_item_update ON order_items;
+DROP FUNCTION IF EXISTS reject_locked_order_item_update();
+DROP TABLE IF EXISTS order_items;
+DROP TABLE IF EXISTS orders;
+DROP TABLE IF EXISTS tax_rates;
+DROP TABLE IF EXISTS service_prices;
+DROP TABLE IF EXISTS services;
+DROP TABLE IF EXISTS customer_addresses;
+DROP TABLE IF EXISTS customers;
+DROP TABLE IF EXISTS outlet_coverage_areas;
+DROP TABLE IF EXISTS outlets;

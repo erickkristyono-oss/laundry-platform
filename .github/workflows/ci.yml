@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-test-lint:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        module:
+          - shared
+          - services/identity
+          - services/core
+          - services/payment
+          - services/notification
+          - services/reporting
+          - gateway
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+      - name: gofmt check
+        working-directory: ${{ matrix.module }}
+        run: test -z "$(gofmt -l .)"
+      - name: go vet
+        working-directory: ${{ matrix.module }}
+        run: go vet ./...
+      - name: go build
+        working-directory: ${{ matrix.module }}
+        run: go build ./...
+      - name: go test
+        working-directory: ${{ matrix.module }}
+        run: go test ./...
+
+  # Applies every service's migrations against a throwaway Postgres, so a
+  # broken migration file fails CI instead of failing at deploy time
+  # (docs/PHASE-0-REVIEW.md §7: "CI/CD ... needs ... a migration-check step").
+  migration-check:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [identity, core, payment, notification, reporting]
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ${{ matrix.service }}_ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+      - name: migrate up
+        working-directory: services/${{ matrix.service }}
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/${{ matrix.service }}_ci?sslmode=disable
+        run: go run ./cmd/migrate up
+      - name: migrate down (rollback smoke test)
+        working-directory: services/${{ matrix.service }}
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/${{ matrix.service }}_ci?sslmode=disable
+        run: go run ./cmd/migrate down

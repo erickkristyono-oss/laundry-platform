@@ -1,0 +1,10 @@
+DROP TABLE IF EXISTS outbox_events;
+DROP TABLE IF EXISTS customer_sessions;
+DROP TABLE IF EXISTS customer_accounts;
+DROP TABLE IF EXISTS sessions;
+DROP TABLE IF EXISTS user_outlets;
+DROP TABLE IF EXISTS role_permissions;
+DROP TABLE IF EXISTS user_roles;
+DROP TABLE IF EXISTS permissions;
+DROP TABLE IF EXISTS roles;
+DROP TABLE IF EXISTS users;
