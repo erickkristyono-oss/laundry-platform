@@ -9,14 +9,22 @@ covers Phase 1: the technical foundation that runs against that spec.
 
 - **Phase 0 (architecture):** complete. 15 documents in `docs/`, all
   cross-referenced and consistent (see `docs/PHASE-0-REVIEW.md` §5, §8).
-- **Phase 1 (technical foundation, this scaffold):** monorepo, 5 Go
-  services + Gateway, PostgreSQL migrations, RabbitMQ/Redis wiring, Docker
-  Compose, CI, and a Next.js frontend shell. **No backend business
-  logic/handlers yet** — every Go service exposes only `/healthz`,
-  `/readyz`, `/metrics` today; the `TODO(phase-2)` comments in each
-  `cmd/server/main.go` mark where `docs/07-api-contract.md`'s handlers
-  attach next. The frontend's auth forms already call the correct Gateway
-  endpoints and degrade gracefully until those handlers exist.
+- **Phase 1 (technical foundation):** complete. Monorepo, 5 Go services +
+  Gateway, PostgreSQL migrations, RabbitMQ/Redis wiring, Docker Compose,
+  CI, and a Next.js frontend shell.
+- **Phase 2 (business logic), core flow — working end-to-end:** customer
+  register/login, staff login, order creation (guest upsert-by-phone,
+  outlet auto-recommend, price snapshot), receive → weigh → finalize
+  weighing → cash payment (synchronously verified against Core) →
+  event-driven `WEIGHING → WASHING` over RabbitMQ → staff-driven
+  `DRYING → IRONING → PACKING → READY → PICKED_UP/DELIVERED → COMPLETED`
+  (blocked unless paid, per BR-02). Verified live via `make up` + curl.
+  **Not yet built** (secondary features, each marked `TODO(phase-2+)` at
+  its call site): refunds, pickup/delivery requests, order transfer, the
+  UQ-05 administrative payment-gate override, staff user management,
+  Idempotency-Key deduplication, reporting projections, and notification
+  rendering. The frontend's auth forms already work against the real
+  Identity endpoints; order/payment UI is not yet wired up.
 
 ## Layout
 
@@ -58,6 +66,19 @@ Each service applies its own migrations automatically on startup. Ports:
 Postgres (5432), RabbitMQ (5672, management UI 15672), Redis (6379) are also
 exposed on their standard ports for local inspection.
 
+On first boot against an empty database, Identity and Core each seed
+themselves so there's something to log in against and order from — logged
+loudly to stdout, local-dev only, never for a shared environment:
+- Identity: one `OWNER` account, `owner@laundryku.local` / `ChangeMe123!`.
+- Core: one outlet (`OUT-001`) and one service (`Cuci Kiloan`, Rp 7.000/kg).
+
+Try the core flow with curl (Gateway at `localhost:8080`):
+```bash
+curl -X POST localhost:8080/api/v1/customer-auth/register -d '{"name":"Budi","phone":"0812xxxx","password":"password123"}'
+curl -X POST localhost:8080/api/v1/auth/login -d '{"identifier":"owner@laundryku.local","password":"ChangeMe123!"}'
+# then POST /api/v1/orders, /status (RECEIVED), PUT .../weigh, POST .../finalize-weighing, POST /api/v1/payments ...
+```
+
 ## Frontend (`web/`)
 
 Next.js 16 (App Router, TypeScript, Tailwind v4). Brand palette and copy are
@@ -75,7 +96,8 @@ web/lib/                     site.ts (brand config), api.ts (Gateway fetch wrapp
 
 Auth forms call the Gateway directly (`/api/v1/auth/*` for staff,
 `/api/v1/customer-auth/*` for customers per `docs/07-api-contract.md` §1–2)
-and show a friendly error if it's unreachable — expected until Phase 2 lands.
+against the real Identity endpoints (see Status above) and show a friendly
+error if the Gateway is unreachable. Order/payment screens are not built yet.
 
 ```bash
 cd web && cp .env.local.example .env.local && npm install && npm run dev
