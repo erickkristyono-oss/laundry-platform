@@ -4,6 +4,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"laundry-platform/shared/httpauth"
+	"laundry-platform/shared/idempotency"
 )
 
 // Mount attaches Payment's routes (docs/07-api-contract.md §11) to r.
@@ -12,7 +13,7 @@ import (
 func (h *Handler) Mount(r chi.Router) {
 	r.Route("/api/v1/payments", func(r chi.Router) {
 		r.Use(httpauth.RequireAuth)
-		r.Post("/", h.CreatePayment)
+		r.With(idempotency.Require(h.Pool, "POST /api/v1/payments")).Post("/", h.CreatePayment)
 		r.Get("/{id}", h.GetPayment)
 		r.Get("/", h.ListPayments)
 	})

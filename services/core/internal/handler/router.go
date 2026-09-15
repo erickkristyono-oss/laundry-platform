@@ -4,6 +4,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"laundry-platform/shared/httpauth"
+	"laundry-platform/shared/idempotency"
 )
 
 var staffAny = []string{"SUPER_ADMIN", "OWNER", "OUTLET_ADMIN", "CASHIER", "LAUNDRY_STAFF"}
@@ -12,7 +13,9 @@ var staffAdmin = []string{"SUPER_ADMIN", "OWNER"}
 // Mount attaches every Core route (docs/07-api-contract.md §4-8) to r.
 // Notes on scope: pickup/delivery (§9-10) and order transfer are secondary
 // features deferred per the "core flow first" prioritization and are not
-// mounted here yet.
+// mounted here yet. Idempotency-Key (docs/11-error-handling.md §4) is only
+// wired for POST /orders so far — the other §12-listed Core endpoints
+// (status transitions, transfer, tax-rate PUT) are a TODO(phase-2+).
 func (h *Handler) Mount(r chi.Router) {
 	r.Route("/api/v1/customers", func(r chi.Router) {
 		r.Post("/", h.CreateCustomer) // PUBLIC: guest checkout creates its own customer row
@@ -42,7 +45,7 @@ func (h *Handler) Mount(r chi.Router) {
 	})
 
 	r.Route("/api/v1/orders", func(r chi.Router) {
-		r.Post("/", h.CreateOrder) // PUBLIC (guest) or authenticated
+		r.With(idempotency.Require(h.Pool, "POST /api/v1/orders")).Post("/", h.CreateOrder) // PUBLIC (guest) or authenticated
 		r.With(httpauth.RequireAuth).Get("/", h.ListOrders)
 		r.With(httpauth.RequireAuth).Get("/{id}", h.GetOrder)
 		r.With(httpauth.RequireAuth, httpauth.RequireStaffRole(staffAny...)).Put("/{id}/items/{itemId}/weigh", h.WeighItem)
