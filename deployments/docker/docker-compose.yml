@@ -96,6 +96,8 @@ services:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       LOG_LEVEL: info
       CORE_SERVICE_URL: http://core:8082
+      PAYMENT_PROVIDER: dummy
+      WEB_BASE_URL: http://localhost:3000
     ports:
       - "18083:8083"
     depends_on:
@@ -116,12 +118,16 @@ services:
       REDIS_ADDR: redis:6379
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       LOG_LEVEL: info
+      CORE_SERVICE_URL: http://core:8082
+      FONNTE_TOKEN: ${FONNTE_TOKEN:-}
+      FONNTE_API_URL: https://api.fonnte.com/send
     ports:
       - "18084:8084"
     depends_on:
       postgres: { condition: service_healthy }
       rabbitmq: { condition: service_healthy }
       redis: { condition: service_healthy }
+      core: { condition: service_started }
 
   reporting:
     build:

@@ -356,6 +356,10 @@ Constraint: partial unique index `idx_tax_rates_active UNIQUE (effective_to) WHE
 | amount | BIGINT | NO | — | CHECK (amount > 0) — must equal order total (BR-07), enforced in domain layer |
 | method | TEXT | NO | — | CHECK (method IN ('CASH','QRIS','TRANSFER','CARD')) |
 | status | TEXT | NO | 'PENDING' | CHECK (status IN ('PENDING','PAID','FAILED','REFUNDED')) |
+| provider | TEXT | NO | 'CASH' | Which `gateway.Provider` handled this charge (`'CASH'` for the cash path, `'DUMMY'` today for QRIS/TRANSFER/CARD — see ADR-015); a real provider name once one is registered |
+| provider_ref | TEXT | YES | — | The provider's own transaction/order reference, for reconciliation |
+| checkout_url | TEXT | YES | — | Where the customer completes the charge (provider-hosted page, or the dummy `/payments/{id}/simulate` page) |
+| qr_string | TEXT | YES | — | QRIS payload string, when `method = 'QRIS'` |
 | paid_at | TIMESTAMPTZ | YES | — | |
 | is_archived | BOOLEAN | NO | false | BR-20 |
 | archived_at | TIMESTAMPTZ | YES | — | |

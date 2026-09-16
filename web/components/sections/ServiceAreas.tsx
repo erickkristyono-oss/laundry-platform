@@ -1,4 +1,5 @@
 import { Container } from "@/components/ui/Container";
+import { LinkButton } from "@/components/ui/Button";
 import { site } from "@/lib/site";
 
 export function ServiceAreas() {
@@ -26,6 +27,10 @@ export function ServiceAreas() {
             </span>
           ))}
         </div>
+
+        <LinkButton href="/order/new" className="mt-10 inline-flex">
+          Buat Pesanan Sekarang
+        </LinkButton>
       </Container>
     </section>
   );

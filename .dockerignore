@@ -2,4 +2,5 @@
 web/.next
 .git
 docs
+!docs/openapi.yaml
 *.md

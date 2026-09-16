@@ -1,10 +1,9 @@
 // Command server runs the Notification Service (docs/04-service-boundaries.md §5):
-// consumes order.*/payment.*/pickup.*/delivery.* events and renders
-// notifications; publishes nothing consumed downstream in MVP (UQ-08).
-//
-// Phase 1 technical-foundation scaffolding only — see the note in
-// services/identity/cmd/server/main.go. Notification rendering/delivery
-// logic is a Phase 2 concern; this wires the subscriptions only.
+// consumes order.*/payment.* events and sends WhatsApp updates via Fonnte
+// (internal/whatsapp) for the customer-facing subset of the order journey;
+// publishes nothing consumed downstream in MVP (UQ-08). pickup.*/delivery.*
+// are subscribed to but not yet rendered — no customer-facing copy for
+// those exists today.
 package main
 
 import (
@@ -17,9 +16,9 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	amqp "github.com/rabbitmq/amqp091-go"
 
 	"laundry-platform/services/notification/internal/config"
+	"laundry-platform/services/notification/internal/handler"
 	"laundry-platform/services/notification/migrations"
 	"laundry-platform/shared/broker"
 	"laundry-platform/shared/health"
@@ -88,6 +87,8 @@ func main() {
 		os.Exit(1)
 	}
 
+	h := handler.New(pool, cfg, logger)
+
 	coreDeliveries, err := conn.DeclareConsumerQueue("notification.core-events", "core.events", []string{
 		"order.#", "pickup.#", "delivery.#",
 	})
@@ -95,7 +96,7 @@ func main() {
 		logger.Error("failed to declare notification.core-events queue", slog.Any("error", err))
 		os.Exit(1)
 	}
-	go consumeEvents(ctx, coreDeliveries, logger)
+	go h.ConsumeCoreEvents(ctx, coreDeliveries)
 
 	paymentDeliveries, err := conn.DeclareConsumerQueue("notification.payment-events", "payment.events", []string{
 		"payment.#",
@@ -104,7 +105,7 @@ func main() {
 		logger.Error("failed to declare notification.payment-events queue", slog.Any("error", err))
 		os.Exit(1)
 	}
-	go consumeEvents(ctx, paymentDeliveries, logger)
+	go h.ConsumePaymentEvents(ctx, paymentDeliveries)
 
 	m := metrics.New(serviceName)
 
@@ -139,23 +140,6 @@ func main() {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(shutdownCtx)
-}
-
-func consumeEvents(ctx context.Context, deliveries <-chan amqp.Delivery, logger *slog.Logger) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case d, ok := <-deliveries:
-			if !ok {
-				return
-			}
-			logger.Info("received event", slog.String("routing_key", d.RoutingKey))
-			// TODO(phase-2): render + persist notifications, deduped on
-			// source_event_id (docs/06-database-schema.md §4.1 unique index).
-			_ = d.Ack(false)
-		}
-	}
 }
 
 func parseLevel(level string) slog.Level {

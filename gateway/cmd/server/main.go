@@ -14,6 +14,7 @@ import (
 
 	"laundry-platform/gateway/internal/authn"
 	"laundry-platform/gateway/internal/config"
+	"laundry-platform/gateway/internal/docsui"
 	"laundry-platform/gateway/internal/proxy"
 	"laundry-platform/gateway/internal/ratelimit"
 	"laundry-platform/shared/health"
@@ -69,6 +70,8 @@ func main() {
 		},
 	}))
 	mux.Handle("/metrics", metrics.Handler())
+	mux.HandleFunc("/docs", docsui.SwaggerUI)
+	mux.HandleFunc("/docs/openapi.yaml", docsui.OpenAPISpec(cfg.OpenAPISpecPath))
 	mux.Handle("/", handler)
 
 	srv := &http.Server{

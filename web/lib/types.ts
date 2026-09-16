@@ -1,5 +1,14 @@
 // Mirrors the JSON shapes returned by Core Service (docs/07-api-contract.md §6, §8).
 
+export type Outlet = {
+  id: string;
+  code: string;
+  name: string;
+  address: string;
+  phone?: string;
+  is_active: boolean;
+};
+
 export type ServiceCatalogItem = {
   id: string;
   code: string;
@@ -58,6 +67,21 @@ export type Order = {
   notes?: string;
   created_at: string;
   items: OrderItem[];
+};
+
+export type Payment = {
+  id: string;
+  payment_code: string;
+  order_id: string;
+  customer_id: string;
+  amount: number;
+  method: "CASH" | "QRIS" | "TRANSFER" | "CARD";
+  status: "PENDING" | "PAID" | "FAILED" | "REFUNDED";
+  provider: string;
+  checkout_url?: string;
+  qr_string?: string;
+  paid_at?: string;
+  created_at: string;
 };
 
 export const ORDER_STEPS: { status: OrderStatus; label: string }[] = [

@@ -1,0 +1,1268 @@
+openapi: 3.0.3
+info:
+  title: LaundryKu API
+  description: >
+    Multi-outlet laundry management platform API, served entirely through the
+    Gateway (localhost:8080 in local dev). Generated from docs/07-api-contract.md —
+    that document remains the source of truth; if this spec and it disagree, the
+    Markdown doc wins (see docs/PHASE-0-REVIEW.md). Import this file directly into
+    Postman (File > Import > this URL or file) to get a runnable collection with
+    every endpoint, or open it in any Swagger UI.
+  version: "1.0.0"
+servers:
+  - url: http://localhost:8080
+    description: Local docker-compose gateway
+
+tags:
+  - name: Auth (Staff)
+  - name: Auth (Customer)
+  - name: Users
+  - name: Customers
+  - name: Outlets
+  - name: Services & Pricing
+  - name: Tax Settings
+  - name: Orders
+  - name: Pickup
+  - name: Delivery
+  - name: Payments
+  - name: Refunds
+  - name: Reports
+
+security:
+  - bearerAuth: []
+
+paths:
+  # ---------------------------------------------------------------------
+  # 1. Staff Authentication
+  # ---------------------------------------------------------------------
+  /api/v1/auth/login:
+    post:
+      tags: [Auth (Staff)]
+      summary: Staff login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [identifier, password]
+              properties:
+                identifier: { type: string, example: owner@laundryku.local }
+                password: { type: string, format: password, example: ChangeMe123! }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TokenPair" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "423": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/Error" }
+
+  /api/v1/auth/refresh:
+    post:
+      tags: [Auth (Staff)]
+      summary: Rotate staff access/refresh token pair
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TokenPair" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/auth/logout:
+    post:
+      tags: [Auth (Staff)]
+      summary: Revoke a staff session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token: { type: string }
+      responses:
+        "204": { description: No Content }
+
+  /api/v1/auth/me:
+    get:
+      tags: [Auth (Staff)]
+      summary: Current staff profile
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StaffUser" }
+
+  # ---------------------------------------------------------------------
+  # 2. Customer Authentication
+  # ---------------------------------------------------------------------
+  /api/v1/customer-auth/register:
+    post:
+      tags: [Auth (Customer)]
+      summary: Register a new customer account
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, password]
+              properties:
+                name: { type: string }
+                email: { type: string, format: email }
+                phone: { type: string, example: "0812xxxxxxx" }
+                password: { type: string, format: password }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CustomerTokenPair" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+  /api/v1/customer-auth/login:
+    post:
+      tags: [Auth (Customer)]
+      summary: Customer login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [identifier, password]
+              properties:
+                identifier: { type: string, description: email or phone }
+                password: { type: string, format: password }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CustomerTokenPair" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/customer-auth/refresh:
+    post:
+      tags: [Auth (Customer)]
+      summary: Rotate customer access/refresh token pair
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CustomerTokenPair" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/customer-auth/logout:
+    post:
+      tags: [Auth (Customer)]
+      summary: Revoke a customer session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token: { type: string }
+      responses:
+        "204": { description: No Content }
+
+  /api/v1/customer-auth/me:
+    get:
+      tags: [Auth (Customer)]
+      summary: Current customer profile
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Customer" }
+
+  /api/v1/customer-auth/password-reset/request:
+    post:
+      tags: [Auth (Customer)]
+      summary: Request a password reset (always 202, never reveals existence)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [identifier]
+              properties:
+                identifier: { type: string }
+      responses:
+        "202": { description: Accepted }
+
+  /api/v1/customer-auth/password-reset/confirm:
+    post:
+      tags: [Auth (Customer)]
+      summary: Confirm a password reset
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reset_token, new_password]
+              properties:
+                reset_token: { type: string }
+                new_password: { type: string, format: password }
+      responses:
+        "204": { description: No Content }
+        "400": { $ref: "#/components/responses/Error" }
+
+  # ---------------------------------------------------------------------
+  # 3. Users (staff management)
+  # ---------------------------------------------------------------------
+  /api/v1/users:
+    post:
+      tags: [Users]
+      summary: Create a staff user
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [full_name, password, role_codes]
+              properties:
+                full_name: { type: string }
+                email: { type: string, format: email }
+                phone: { type: string }
+                password: { type: string, format: password }
+                role_codes: { type: array, items: { type: string }, example: ["CASHIER"] }
+                outlet_ids: { type: array, items: { type: string, format: uuid } }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StaffUser" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+    get:
+      tags: [Users]
+      summary: List staff users
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: "#/components/schemas/StaffUser" } }
+
+  /api/v1/users/{id}:
+    parameters: [{ $ref: "#/components/parameters/IdPathParam" }]
+    get:
+      tags: [Users]
+      summary: Get a staff user
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StaffUser" }
+    patch:
+      tags: [Users]
+      summary: Update a staff user (activation, roles, outlets)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                is_active: { type: boolean }
+                role_codes: { type: array, items: { type: string } }
+                outlet_ids: { type: array, items: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StaffUser" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  # ---------------------------------------------------------------------
+  # 4. Customers
+  # ---------------------------------------------------------------------
+  /api/v1/customers:
+    post:
+      tags: [Customers]
+      summary: Create (or upsert-by-phone) a guest customer
+      security: []
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, phone]
+              properties:
+                name: { type: string }
+                phone: { type: string }
+                email: { type: string, format: email }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Customer" }
+
+  /api/v1/customers/{id}:
+    parameters: [{ $ref: "#/components/parameters/IdPathParam" }]
+    get:
+      tags: [Customers]
+      summary: Get a customer
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Customer" }
+
+  /api/v1/customers/{id}/addresses:
+    parameters: [{ $ref: "#/components/parameters/IdPathParam" }]
+    post:
+      tags: [Customers]
+      summary: Add an address to a customer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [label, address_line]
+              properties:
+                label: { type: string, example: Rumah }
+                address_line: { type: string }
+                postal_code: { type: string }
+                is_default: { type: boolean }
+      responses:
+        "201": { description: Created }
+
+  # ---------------------------------------------------------------------
+  # 5. Outlets
+  # ---------------------------------------------------------------------
+  /api/v1/outlets:
+    get:
+      tags: [Outlets]
+      summary: List active outlets
+      security: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: "#/components/schemas/Outlet" } }
+    post:
+      tags: [Outlets]
+      summary: Create an outlet
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code, name, address]
+              properties:
+                code: { type: string, example: OUT-002 }
+                name: { type: string }
+                address: { type: string }
+                phone: { type: string }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Outlet" }
+
+  /api/v1/outlets/{id}/coverage-areas:
+    parameters: [{ $ref: "#/components/parameters/IdPathParam" }]
+    post:
+      tags: [Outlets]
+      summary: Add a coverage area to an outlet
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [area_label]
+              properties:
+                area_label: { type: string }
+                postal_code: { type: string }
+                priority: { type: integer }
+      responses:
+        "201": { description: Created }
+
+  /api/v1/outlets/recommend:
+    get:
+      tags: [Outlets]
+      summary: Recommend an outlet from a postal code or area label
+      security: []
+      parameters:
+        - name: postal_code
+          in: query
+          schema: { type: string }
+        - name: area_label
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Outlet" }
+        "204": { description: No matching outlet }
+
+  # ---------------------------------------------------------------------
+  # 6. Services & Pricing
+  # ---------------------------------------------------------------------
+  /api/v1/services:
+    get:
+      tags: [Services & Pricing]
+      summary: List active service catalog with current price
+      security: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: "#/components/schemas/Service" } }
+    post:
+      tags: [Services & Pricing]
+      summary: Create a service
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code, name, unit]
+              properties:
+                code: { type: string }
+                name: { type: string }
+                unit: { type: string, enum: [kg, pcs] }
+      responses:
+        "201": { description: Created }
+
+  /api/v1/pricing:
+    get:
+      tags: [Services & Pricing]
+      summary: Get the currently active price for a service
+      security: []
+      parameters:
+        - name: service_id
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+        - name: outlet_id
+          in: query
+          schema: { type: string, format: uuid }
+      responses:
+        "200": { description: OK }
+    post:
+      tags: [Services & Pricing]
+      summary: Set a new price (never updates an existing row)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [service_id, price_per_unit, effective_from]
+              properties:
+                service_id: { type: string, format: uuid }
+                outlet_id: { type: string, format: uuid, nullable: true }
+                price_per_unit: { type: integer, minimum: 1 }
+                effective_from: { type: string, format: date-time }
+      responses:
+        "201": { description: Created }
+
+  # ---------------------------------------------------------------------
+  # 7. Tax Settings
+  # ---------------------------------------------------------------------
+  /api/v1/settings/tax-rate:
+    get:
+      tags: [Tax Settings]
+      summary: Get the currently active tax rate
+      security: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  rate_percentage: { type: string, example: "0.00" }
+                  effective_from: { type: string, format: date-time }
+    put:
+      tags: [Tax Settings]
+      summary: Change the active tax rate (OWNER/SUPER_ADMIN only)
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rate_percentage, reason]
+              properties:
+                rate_percentage: { type: string, example: "11.00" }
+                reason: { type: string }
+      responses:
+        "201": { description: Created }
+        "403": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+  # ---------------------------------------------------------------------
+  # 8. Orders
+  # ---------------------------------------------------------------------
+  /api/v1/orders:
+    get:
+      tags: [Orders]
+      summary: List orders (paginated, scoped by role/ownership)
+      parameters:
+        - name: customer_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: outlet_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: status
+          in: query
+          schema: { $ref: "#/components/schemas/OrderStatus" }
+        - name: payment_status
+          in: query
+          schema: { $ref: "#/components/schemas/PaymentStatus" }
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: page_size
+          in: query
+          schema: { type: integer, default: 20, maximum: 100 }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: "#/components/schemas/Order" } }
+                  page: { type: integer }
+                  page_size: { type: integer }
+                  total: { type: integer }
+    post:
+      tags: [Orders]
+      summary: Create an order (guest-allowed for source=WEBSITE)
+      security: []
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [source, fulfillment_type, items]
+              properties:
+                customer:
+                  type: object
+                  properties:
+                    id: { type: string, format: uuid, nullable: true }
+                    name: { type: string }
+                    phone: { type: string }
+                outlet_id: { type: string, format: uuid, nullable: true, description: "null = auto-recommend" }
+                source: { type: string, enum: [WEBSITE, POS, WHATSAPP] }
+                fulfillment_type: { type: string, enum: [WALK_IN, PICKUP, DELIVERY, PICKUP_AND_DELIVERY] }
+                items:
+                  type: array
+                  items:
+                    type: object
+                    required: [service_id]
+                    properties:
+                      service_id: { type: string, format: uuid }
+                      estimated_weight_kg: { type: number, nullable: true }
+                pickup_requested: { type: boolean }
+                delivery_requested: { type: boolean }
+                notes: { type: string, nullable: true }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Order" }
+        "422": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+
+  /api/v1/orders/{id}:
+    parameters: [{ $ref: "#/components/parameters/IdPathParam" }]
+    get:
+      tags: [Orders]
+      summary: Get an order
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Order" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /api/v1/orders/{id}/items/{itemId}/weigh:
+    parameters:
+      - { $ref: "#/components/parameters/IdPathParam" }
+      - name: itemId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    put:
+      tags: [Orders]
+      summary: Record an item's actual weight
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [actual_weight_kg]
+              properties:
+                actual_weight_kg: { type: number }
+      responses:
+        "200": { description: OK }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+  /api/v1/orders/{id}/finalize-weighing:
+    parameters: [{ $ref: "#/components/parameters/IdPathParam" }]
+    post:
+      tags: [Orders]
+      summary: Finalize weighing and compute totals
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                pickup_fee: { type: integer, nullable: true }
+                delivery_fee: { type: integer, nullable: true }
+      responses:
+        "200": { description: OK }
+        "409": { $ref: "#/components/responses/Error" }
+
+  /api/v1/orders/{id}/status:
+    parameters: [{ $ref: "#/components/parameters/IdPathParam" }]
+    post:
+      tags: [Orders]
+      summary: Transition order status (never accepts WEIGHING→WASHING — see override endpoint)
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to_status]
+              properties:
+                to_status: { $ref: "#/components/schemas/OrderStatus" }
+                reason: { type: string, description: "required for ON_HOLD/CANCELLED" }
+      responses:
+        "200": { description: OK }
+        "403": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+
+  /api/v1/orders/{id}/status/override:
+    parameters: [{ $ref: "#/components/parameters/IdPathParam" }]
+    post:
+      tags: [Orders]
+      summary: "UQ-05: administrative WEIGHING→WASHING override (OWNER/SUPER_ADMIN only)"
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string, minLength: 10 }
+      responses:
+        "200": { description: OK }
+        "403": { $ref: "#/components/responses/Error" }
+        "400": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+
+  /api/v1/orders/{id}/transfer:
+    parameters: [{ $ref: "#/components/parameters/IdPathParam" }]
+    post:
+      tags: [Orders]
+      summary: Transfer an order to another outlet (status unchanged)
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to_outlet_id, reason]
+              properties:
+                to_outlet_id: { type: string, format: uuid }
+                reason: { type: string }
+      responses:
+        "200": { description: OK }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+  # ---------------------------------------------------------------------
+  # 9-10. Pickup & Delivery
+  # ---------------------------------------------------------------------
+  /api/v1/orders/{id}/pickup:
+    parameters: [{ $ref: "#/components/parameters/IdPathParam" }]
+    post:
+      tags: [Pickup]
+      summary: Request a pickup for an existing order
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address_id]
+              properties:
+                address_id: { type: string, format: uuid }
+                preferred_window: { type: string }
+      responses:
+        "201": { description: Created }
+
+  /api/v1/pickups/{id}:
+    parameters: [{ $ref: "#/components/parameters/IdPathParam" }]
+    patch:
+      tags: [Pickup]
+      summary: Update a pickup request's status
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [SCHEDULED, COMPLETED, CANCELLED] }
+                scheduled_at: { type: string, format: date-time }
+      responses:
+        "200": { description: OK }
+
+  /api/v1/orders/{id}/delivery:
+    parameters: [{ $ref: "#/components/parameters/IdPathParam" }]
+    post:
+      tags: [Delivery]
+      summary: Request a delivery for an order (must be READY)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address_id]
+              properties:
+                address_id: { type: string, format: uuid }
+                preferred_window: { type: string }
+      responses:
+        "201": { description: Created }
+
+  /api/v1/deliveries/{id}:
+    parameters: [{ $ref: "#/components/parameters/IdPathParam" }]
+    patch:
+      tags: [Delivery]
+      summary: Update a delivery request's status
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [SCHEDULED, COMPLETED, CANCELLED] }
+                scheduled_at: { type: string, format: date-time }
+      responses:
+        "200": { description: OK }
+
+  # ---------------------------------------------------------------------
+  # 11. Payments
+  # ---------------------------------------------------------------------
+  /api/v1/payments:
+    get:
+      tags: [Payments]
+      summary: List payments for an order
+      parameters:
+        - name: order_id
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: "#/components/schemas/Payment" } }
+    post:
+      tags: [Payments]
+      summary: Create a payment (CASH settles immediately; others start a gateway charge)
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [order_id, amount, method]
+              properties:
+                order_id: { type: string, format: uuid }
+                amount: { type: integer }
+                method: { type: string, enum: [CASH, QRIS, TRANSFER, CARD] }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Payment" }
+        "409": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+
+  /api/v1/payments/{id}:
+    parameters: [{ $ref: "#/components/parameters/IdPathParam" }]
+    get:
+      tags: [Payments]
+      summary: Get a payment
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Payment" }
+
+  /api/v1/payments/{id}/simulate:
+    parameters: [{ $ref: "#/components/parameters/IdPathParam" }]
+    post:
+      tags: [Payments]
+      summary: "Dummy-gateway only (ADR-015): simulate a provider webhook"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [outcome]
+              properties:
+                outcome: { type: string, enum: [PAID, FAILED] }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Payment" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+
+  # ---------------------------------------------------------------------
+  # 12. Refunds
+  # ---------------------------------------------------------------------
+  /api/v1/refunds:
+    get:
+      tags: [Refunds]
+      summary: List refunds for an order
+      parameters:
+        - name: order_id
+          in: query
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: "#/components/schemas/Refund" } }
+    post:
+      tags: [Refunds]
+      summary: Request a refund
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [payment_id, reason]
+              properties:
+                payment_id: { type: string, format: uuid }
+                reason: { type: string }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Refund" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+
+  /api/v1/refunds/{id}:
+    parameters: [{ $ref: "#/components/parameters/IdPathParam" }]
+    get:
+      tags: [Refunds]
+      summary: Get a refund
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Refund" }
+
+  /api/v1/refunds/{id}/approve:
+    parameters: [{ $ref: "#/components/parameters/IdPathParam" }]
+    post:
+      tags: [Refunds]
+      summary: Approve a refund (never the customer — BR-18)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                amount: { type: integer, description: "override, defaults to full payment amount" }
+      responses:
+        "200": { description: OK }
+
+  /api/v1/refunds/{id}/reject:
+    parameters: [{ $ref: "#/components/parameters/IdPathParam" }]
+    post:
+      tags: [Refunds]
+      summary: Reject a refund (terminal)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string }
+      responses:
+        "200": { description: OK }
+
+  # ---------------------------------------------------------------------
+  # 13. Reports
+  # ---------------------------------------------------------------------
+  /api/v1/reports/sales:
+    get:
+      tags: [Reports]
+      summary: Daily sales series
+      parameters:
+        - { $ref: "#/components/parameters/FromDate" }
+        - { $ref: "#/components/parameters/ToDate" }
+        - name: outlet_id
+          in: query
+          schema: { type: string, format: uuid }
+      responses:
+        "200": { description: OK }
+
+  /api/v1/reports/orders/summary:
+    get:
+      tags: [Reports]
+      summary: Order summary report
+      parameters:
+        - { $ref: "#/components/parameters/FromDate" }
+        - { $ref: "#/components/parameters/ToDate" }
+        - name: outlet_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: status
+          in: query
+          schema: { $ref: "#/components/schemas/OrderStatus" }
+      responses:
+        "200": { description: OK }
+
+  /api/v1/reports/services/performance:
+    get:
+      tags: [Reports]
+      summary: Service performance report (OWNER/SUPER_ADMIN only)
+      parameters:
+        - { $ref: "#/components/parameters/FromDate" }
+        - { $ref: "#/components/parameters/ToDate" }
+      responses:
+        "200": { description: OK }
+
+  /api/v1/reports/refunds:
+    get:
+      tags: [Reports]
+      summary: Refunds report
+      parameters:
+        - { $ref: "#/components/parameters/FromDate" }
+        - { $ref: "#/components/parameters/ToDate" }
+        - name: outlet_id
+          in: query
+          schema: { type: string, format: uuid }
+      responses:
+        "200": { description: OK }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >
+        Staff and customer tokens are issued by different endpoints (§1 vs §2)
+        and are never interchangeable (ADR-013) — a customer token is rejected
+        by every staff-only route and vice versa.
+
+  parameters:
+    IdPathParam:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Required for financially/physically consequential POSTs (docs/11-error-handling.md §4).
+      schema: { type: string, format: uuid }
+    FromDate:
+      name: from
+      in: query
+      schema: { type: string, format: date }
+    ToDate:
+      name: to
+      in: query
+      schema: { type: string, format: date }
+
+  responses:
+    Unauthorized:
+      description: Invalid credentials or token
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    Error:
+      description: Error (see `error.code` for the specific reason)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code: { type: string, example: ORDER_ALREADY_PAID }
+            message: { type: string }
+            details:
+              type: array
+              items:
+                type: object
+                properties:
+                  field: { type: string }
+                  issue: { type: string }
+            request_id: { type: string }
+            correlation_id: { type: string }
+
+    TokenPair:
+      type: object
+      properties:
+        access_token: { type: string }
+        refresh_token: { type: string }
+        expires_in: { type: integer, example: 900 }
+        user:
+          type: object
+          properties:
+            id: { type: string, format: uuid }
+            full_name: { type: string }
+            roles: { type: array, items: { type: string } }
+
+    CustomerTokenPair:
+      type: object
+      properties:
+        access_token: { type: string }
+        refresh_token: { type: string }
+        expires_in: { type: integer }
+        customer:
+          type: object
+          properties:
+            id: { type: string, format: uuid }
+            name: { type: string }
+            customer_code: { type: string }
+
+    StaffUser:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        full_name: { type: string }
+        email: { type: string, nullable: true }
+        phone: { type: string, nullable: true }
+        is_active: { type: boolean }
+        roles: { type: array, items: { type: string } }
+        outlet_ids: { type: array, items: { type: string, format: uuid } }
+
+    Customer:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        customer_code: { type: string }
+        name: { type: string }
+        phone: { type: string }
+        email: { type: string, nullable: true }
+        is_guest: { type: boolean }
+        identity_account_id: { type: string, format: uuid, nullable: true }
+
+    Outlet:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string }
+        name: { type: string }
+        address: { type: string }
+        phone: { type: string, nullable: true }
+        is_active: { type: boolean }
+
+    Service:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string }
+        name: { type: string }
+        unit: { type: string, enum: [kg, pcs] }
+        is_active: { type: boolean }
+        price_per_unit: { type: integer, nullable: true }
+
+    OrderStatus:
+      type: string
+      enum:
+        [CREATED, RECEIVED, WEIGHING, WASHING, DRYING, IRONING, PACKING,
+         READY, PICKED_UP, DELIVERED, COMPLETED, ON_HOLD, CANCELLED]
+
+    PaymentStatus:
+      type: string
+      enum: [UNPAID, PENDING, PAID, FAILED, REFUNDED]
+
+    OrderItem:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        service_id: { type: string, format: uuid }
+        service_name_snapshot: { type: string }
+        unit: { type: string }
+        estimated_weight_kg: { type: string, nullable: true }
+        actual_weight_kg: { type: string, nullable: true }
+        unit_price_snapshot: { type: integer }
+        subtotal: { type: integer, nullable: true }
+        is_locked: { type: boolean }
+
+    Order:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        order_code: { type: string }
+        customer_id: { type: string, format: uuid }
+        current_outlet_id: { type: string, format: uuid }
+        source: { type: string }
+        fulfillment_type: { type: string }
+        status: { $ref: "#/components/schemas/OrderStatus" }
+        payment_status: { $ref: "#/components/schemas/PaymentStatus" }
+        estimated_total_amount: { type: integer, nullable: true }
+        subtotal_amount: { type: integer, nullable: true }
+        discount_amount: { type: integer }
+        tax_amount: { type: integer }
+        tax_rate_snapshot: { type: string }
+        pickup_fee: { type: integer }
+        delivery_fee: { type: integer }
+        total_amount: { type: integer, nullable: true }
+        notes: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+        items: { type: array, items: { $ref: "#/components/schemas/OrderItem" } }
+
+    Payment:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        payment_code: { type: string }
+        order_id: { type: string, format: uuid }
+        customer_id: { type: string, format: uuid }
+        amount: { type: integer }
+        method: { type: string, enum: [CASH, QRIS, TRANSFER, CARD] }
+        status: { type: string, enum: [PENDING, PAID, FAILED, REFUNDED] }
+        provider: { type: string, example: DUMMY }
+        checkout_url: { type: string, nullable: true }
+        qr_string: { type: string, nullable: true }
+        paid_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    Refund:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        refund_code: { type: string }
+        payment_id: { type: string, format: uuid }
+        order_id: { type: string, format: uuid }
+        amount: { type: integer }
+        status: { type: string, enum: [REQUESTED, APPROVED, PROCESSING, COMPLETED, FAILED, REJECTED] }
+        reason: { type: string }
+        requested_by: { type: string, format: uuid }
+        approved_by: { type: string, format: uuid, nullable: true }
+        processed_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }

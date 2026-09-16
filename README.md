@@ -150,3 +150,7 @@ migration up/down check against a throwaway Postgres for every service.
 - **Why a technology/pattern was chosen:** `docs/14-architecture-decisions.md`.
 - **What each service owns and is allowed to call:**
   `docs/04-service-boundaries.md`.
+
+
+Owner : owner@laundryku.local
+Pass : ChangeMe123!

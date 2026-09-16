@@ -17,6 +17,7 @@ func (h *Handler) Mount(r chi.Router) {
 		r.With(idempotency.Require(h.Pool, "POST /api/v1/payments")).Post("/", h.CreatePayment)
 		r.Get("/{id}", h.GetPayment)
 		r.Get("/", h.ListPayments)
+		r.Post("/{id}/simulate", h.SimulateGatewayCallback)
 	})
 
 	r.Route("/api/v1/refunds", func(r chi.Router) {

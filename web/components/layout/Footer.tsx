@@ -19,10 +19,26 @@ export function Footer() {
             Layanan
           </h3>
           <ul className="space-y-2.5 text-sm text-slate-400">
-            <li>Cuci Kiloan (Wash &amp; Fold)</li>
-            <li>Cuci Express</li>
-            <li>Dry Clean</li>
-            <li>Sepatu &amp; Boneka</li>
+            <li>
+              <Link href="/#layanan" className="hover:text-white">
+                Cuci Kiloan (Wash &amp; Fold)
+              </Link>
+            </li>
+            <li>
+              <Link href="/#layanan" className="hover:text-white">
+                Cuci Express
+              </Link>
+            </li>
+            <li>
+              <Link href="/#layanan" className="hover:text-white">
+                Dry Clean
+              </Link>
+            </li>
+            <li>
+              <Link href="/#layanan" className="hover:text-white">
+                Sepatu &amp; Boneka
+              </Link>
+            </li>
           </ul>
         </div>
 

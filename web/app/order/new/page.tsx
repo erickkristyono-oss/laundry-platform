@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/Button";
 import { Field, Input } from "@/components/ui/Input";
 import { useCustomerSession } from "@/lib/useSession";
 import { apiFetch, ApiError } from "@/lib/api";
-import { formatIDR, type Order, type ServiceCatalogItem } from "@/lib/types";
+import { formatIDR, type Order, type Outlet, type ServiceCatalogItem } from "@/lib/types";
 
 export default function NewOrderPage() {
   const router = useRouter();
@@ -15,6 +15,8 @@ export default function NewOrderPage() {
 
   const [services, setServices] = useState<ServiceCatalogItem[] | null>(null);
   const [serviceId, setServiceId] = useState("");
+  const [outlets, setOutlets] = useState<Outlet[] | null>(null);
+  const [outletId, setOutletId] = useState("");
   const [weightKg, setWeightKg] = useState("3");
   const [notes, setNotes] = useState("");
   const [loading, setLoading] = useState(false);
@@ -26,7 +28,14 @@ export default function NewOrderPage() {
         setServices(res.data ?? []);
         if (res.data?.[0]) setServiceId(res.data[0].id);
       })
-      .catch(() => setError("Tidak dapat memuat daftar layanan."));
+      .catch(() => setError("Tidak dapat memuat daftar layanan"));
+
+    apiFetch<{ data: Outlet[] }>("/api/v1/outlets", { auth: "none" })
+      .then((res) => {
+        setOutlets(res.data ?? []);
+        if (res.data?.[0]) setOutletId(res.data[0].id);
+      })
+      .catch(() => setError("Tidak dapat memuat daftar outlet."));
   }, []);
 
   if (!session) return null;
@@ -47,6 +56,7 @@ export default function NewOrderPage() {
         method: "POST",
         body: JSON.stringify({
           customer: { id: session.customer.id },
+          outlet_id: outletId || undefined,
           source: "WEBSITE",
           fulfillment_type: "WALK_IN",
           items: [{ service_id: serviceId, estimated_weight_kg: Number(weightKg) }],
@@ -78,6 +88,21 @@ export default function NewOrderPage() {
         </p>
 
         <form onSubmit={onSubmit} className="mt-8 space-y-5 rounded-2xl border border-slate-100 bg-white p-6 shadow-sm">
+          <Field label="Outlet">
+            <select
+              required
+              value={outletId}
+              onChange={(e) => setOutletId(e.target.value)}
+              className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm text-slate-900 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
+            >
+              {outlets?.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.name} — {o.address}
+                </option>
+              ))}
+            </select>
+          </Field>
+
           <Field label="Layanan">
             <select
               required
@@ -119,7 +144,7 @@ export default function NewOrderPage() {
             <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
           )}
 
-          <Button type="submit" disabled={loading || !serviceId} className="w-full">
+          <Button type="submit" disabled={loading || !serviceId || !outletId} className="w-full">
             {loading ? "Memproses…" : "Buat Pesanan"}
           </Button>
         </form>

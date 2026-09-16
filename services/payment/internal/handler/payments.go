@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"laundry-platform/services/payment/internal/gateway"
 	"laundry-platform/shared/bizid"
 	"laundry-platform/shared/respond"
 )
@@ -24,6 +25,9 @@ type paymentResponse struct {
 	Amount      int64      `json:"amount"`
 	Method      string     `json:"method"`
 	Status      string     `json:"status"`
+	Provider    string     `json:"provider"`
+	CheckoutURL *string    `json:"checkout_url,omitempty"`
+	QRString    *string    `json:"qr_string,omitempty"`
 	PaidAt      *time.Time `json:"paid_at,omitempty"`
 	CreatedAt   time.Time  `json:"created_at"`
 }
@@ -80,11 +84,38 @@ func (h *Handler) CreatePayment(w http.ResponseWriter, r *http.Request) {
 	id := uuid.New().String()
 	paymentCode := bizid.Payment()
 	status := "PENDING"
+	provider := "CASH"
 	var paidAt *time.Time
+	var checkoutURL, qrString, providerRef *string
+
 	if req.Method == "CASH" {
 		now := time.Now()
 		paidAt = &now
 		status = "PAID"
+	} else {
+		result, err := h.Provider.Charge(ctx, gateway.ChargeRequest{
+			PaymentID:   id,
+			PaymentCode: paymentCode,
+			OrderID:     req.OrderID,
+			Amount:      req.Amount,
+			Method:      req.Method,
+		})
+		if err != nil {
+			h.Logger.Error("create payment: gateway charge failed", "error", err)
+			respond.Error(w, r, http.StatusServiceUnavailable, "GATEWAY_UNAVAILABLE", "Could not start payment with the provider right now.")
+			return
+		}
+		provider = h.Provider.Name()
+		status = result.Status
+		if result.CheckoutURL != "" {
+			checkoutURL = &result.CheckoutURL
+		}
+		if result.QRString != "" {
+			qrString = &result.QRString
+		}
+		if result.ProviderRef != "" {
+			providerRef = &result.ProviderRef
+		}
 	}
 
 	tx, err := h.Pool.Begin(ctx)
@@ -95,9 +126,9 @@ func (h *Handler) CreatePayment(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback(ctx)
 
 	_, err = tx.Exec(ctx, `
-		INSERT INTO payments (id, payment_code, order_id, customer_id, amount, method, status, paid_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-	`, id, paymentCode, req.OrderID, order.CustomerID, req.Amount, req.Method, status, paidAt)
+		INSERT INTO payments (id, payment_code, order_id, customer_id, amount, method, status, paid_at, provider, provider_ref, checkout_url, qr_string)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+	`, id, paymentCode, req.OrderID, order.CustomerID, req.Amount, req.Method, status, paidAt, provider, providerRef, checkoutURL, qrString)
 	if err != nil {
 		if isUniqueViolation(err) {
 			respond.Error(w, r, http.StatusConflict, "ORDER_ALREADY_PAID", "This order has already been paid.")
@@ -142,7 +173,8 @@ func (h *Handler) CreatePayment(w http.ResponseWriter, r *http.Request) {
 
 	respond.JSON(w, http.StatusCreated, paymentResponse{
 		ID: id, PaymentCode: paymentCode, OrderID: req.OrderID, CustomerID: order.CustomerID,
-		Amount: req.Amount, Method: req.Method, Status: status, PaidAt: paidAt, CreatedAt: time.Now(),
+		Amount: req.Amount, Method: req.Method, Status: status, Provider: provider,
+		CheckoutURL: checkoutURL, QRString: qrString, PaidAt: paidAt, CreatedAt: time.Now(),
 	})
 }
 
@@ -171,7 +203,7 @@ func (h *Handler) ListPayments(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := h.Pool.Query(r.Context(), `
-		SELECT id, payment_code, order_id, customer_id, amount, method, status, paid_at, created_at
+		SELECT id, payment_code, order_id, customer_id, amount, method, status, provider, checkout_url, qr_string, paid_at, created_at
 		FROM payments WHERE order_id = $1 ORDER BY created_at DESC
 	`, orderID)
 	if err != nil {
@@ -184,7 +216,7 @@ func (h *Handler) ListPayments(w http.ResponseWriter, r *http.Request) {
 	out := []paymentResponse{}
 	for rows.Next() {
 		var p paymentResponse
-		if err := rows.Scan(&p.ID, &p.PaymentCode, &p.OrderID, &p.CustomerID, &p.Amount, &p.Method, &p.Status, &p.PaidAt, &p.CreatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.PaymentCode, &p.OrderID, &p.CustomerID, &p.Amount, &p.Method, &p.Status, &p.Provider, &p.CheckoutURL, &p.QRString, &p.PaidAt, &p.CreatedAt); err != nil {
 			h.Logger.Error("list payments: scan failed", "error", err)
 			respond.Error(w, r, http.StatusInternalServerError, "INTERNAL_ERROR", "Something went wrong.")
 			return
@@ -197,8 +229,8 @@ func (h *Handler) ListPayments(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) paymentByID(ctx context.Context, id string) (paymentResponse, error) {
 	var p paymentResponse
 	err := h.Pool.QueryRow(ctx, `
-		SELECT id, payment_code, order_id, customer_id, amount, method, status, paid_at, created_at
+		SELECT id, payment_code, order_id, customer_id, amount, method, status, provider, checkout_url, qr_string, paid_at, created_at
 		FROM payments WHERE id = $1
-	`, id).Scan(&p.ID, &p.PaymentCode, &p.OrderID, &p.CustomerID, &p.Amount, &p.Method, &p.Status, &p.PaidAt, &p.CreatedAt)
+	`, id).Scan(&p.ID, &p.PaymentCode, &p.OrderID, &p.CustomerID, &p.Amount, &p.Method, &p.Status, &p.Provider, &p.CheckoutURL, &p.QRString, &p.PaidAt, &p.CreatedAt)
 	return p, err
 }

@@ -195,9 +195,10 @@ Distinct from §1: issues **customer-scoped** tokens (`principal_type=CUSTOMER`,
 - Errors: `422 VALIDATION_ERROR`, `409 CUSTOMER_CONFLICT`.
 - Idempotency: **required** (`Idempotency-Key`) — prevents duplicate order creation on client retry.
 
-### `GET /api/v1/orders/{id}` / `GET /api/v1/orders?customer_id=&outlet_id=&status=&payment_status=`
+### `GET /api/v1/orders/{id}` / `GET /api/v1/orders?customer_id=&outlet_id=&status=&payment_status=&page=&page_size=`
 - Auth: required. Authz: outlet-scoped for staff roles; customer may fetch own orders only.
 - `status` filters on the order lifecycle state machine; `payment_status` filters independently on the payment state machine (`10-state-machines.md` §1 vs §2) — the two are never conflated into one filter parameter.
+- Pagination: `page` (1-based, default `1`) and `page_size` (default `20`, max `100`). List response shape: `{ "data": [...], "page", "page_size", "total" }` — `total` is the full match count (ignoring `page`/`page_size`) so the client can compute total pages.
 
 ### `PUT /api/v1/orders/{id}/items/{itemId}/weigh`
 - Auth: required. Authz: `CASHIER`, `LAUNDRY_STAFF`, `OUTLET_ADMIN` (own outlet).
@@ -272,12 +273,18 @@ Distinct from §1: issues **customer-scoped** tokens (`principal_type=CUSTOMER`,
 - Auth: required. Authz: `CASHIER`, `OUTLET_ADMIN`, or the owning customer (self-checkout on website).
 - Request: `{ "order_id","amount","method" }`.
 - Validation: synchronously verify `amount == Core.orders.total_amount` (service-to-service read); order status must be `WEIGHING` with weighing finalized.
-- Response `201`: payment object `status=PENDING` → (for CASH, immediately `PAID`; for QRIS/TRANSFER/CARD, `PAID` after gateway callback in Phase 1+, out of scope for Phase 0 wiring).
-- Errors: `409 AMOUNT_MISMATCH` (BR-07), `409 ORDER_ALREADY_PAID` (BR-06), `409 INVALID_ORDER_STATE`.
+- Response `201`: payment object, `status=PAID` immediately for `CASH`; for `QRIS`/`TRANSFER`/`CARD`, `status=PENDING` with `checkout_url` (and `qr_string` for `QRIS`) set by the currently configured `gateway.Provider` (**ADR-015**: `DUMMY` until a real gateway account is registered) — the client sends the customer to `checkout_url` to complete the charge.
+- Errors: `409 AMOUNT_MISMATCH` (BR-07), `409 ORDER_ALREADY_PAID` (BR-06), `409 INVALID_ORDER_STATE`, `503 GATEWAY_UNAVAILABLE`.
 - Idempotency: **required** — critical for BR-06 (prevents double-charge on retry).
 
 ### `GET /api/v1/payments/{id}` / `GET /api/v1/payments?order_id=`
 - Auth: required. Authz: outlet-scoped / owning customer.
+
+### `POST /api/v1/payments/{id}/simulate` — dummy-provider only (**ADR-015**)
+- Auth: required.
+- Request: `{ "outcome": "PAID" | "FAILED" }`.
+- Effect: while `PAYMENT_PROVIDER=dummy`, moves a `PENDING` gateway payment to `PAID`/`FAILED` and emits `payment.paid`/`payment.failed` — the same effect a real provider's signed webhook would have. Stands in for that webhook only until a real gateway is registered.
+- Errors: `404 NOT_FOUND` (no dummy provider active, or payment not found), `409 NOT_A_GATEWAY_PAYMENT`, `409 INVALID_STATE` (payment not `PENDING`).
 
 ---
 

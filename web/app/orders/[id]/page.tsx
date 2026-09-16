@@ -4,6 +4,8 @@ import { use, useEffect, useState } from "react";
 import { Container } from "@/components/ui/Container";
 import { StatusBadge, PaymentBadge } from "@/components/order/StatusBadge";
 import { StatusTimeline } from "@/components/order/StatusTimeline";
+import { PaymentNotice } from "@/components/order/PaymentNotice";
+import { PaymentActions } from "@/components/order/PaymentActions";
 import { useCustomerSession } from "@/lib/useSession";
 import { apiFetch } from "@/lib/api";
 import { formatIDR, type Order } from "@/lib/types";
@@ -79,6 +81,11 @@ export default function CustomerOrderDetailPage({
                 <span>{formatIDR(order.total_amount ?? order.estimated_total_amount)}</span>
               </div>
             </div>
+
+            <PaymentNotice status={order.payment_status} />
+            {order.payment_status === "UNPAID" && order.total_amount !== undefined && (
+              <PaymentActions orderId={order.id} amount={order.total_amount} />
+            )}
           </div>
         )}
       </Container>

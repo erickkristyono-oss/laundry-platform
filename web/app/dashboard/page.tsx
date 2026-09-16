@@ -3,22 +3,32 @@
 import { useEffect, useState } from "react";
 import { Container } from "@/components/ui/Container";
 import { LinkButton } from "@/components/ui/Button";
+import { Pagination } from "@/components/ui/Pagination";
 import { OrderCard } from "@/components/order/OrderCard";
 import { useCustomerSession } from "@/lib/useSession";
 import { apiFetch } from "@/lib/api";
 import type { Order } from "@/lib/types";
 
+const PAGE_SIZE = 9;
+
 export default function DashboardPage() {
   const session = useCustomerSession();
   const [orders, setOrders] = useState<Order[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
 
   useEffect(() => {
     if (!session) return;
-    apiFetch<{ data: Order[] }>(`/api/v1/orders?customer_id=${session.customer.id}`)
-      .then((res) => setOrders(res.data ?? []))
+    apiFetch<{ data: Order[]; total: number }>(
+      `/api/v1/orders?customer_id=${session.customer.id}&page=${page}&page_size=${PAGE_SIZE}`,
+    )
+      .then((res) => {
+        setOrders(res.data ?? []);
+        setTotal(res.total ?? 0);
+      })
       .catch(() => setError("Tidak dapat memuat daftar pesanan."));
-  }, [session]);
+  }, [session, page]);
 
   if (!session) return null;
 
@@ -61,6 +71,8 @@ export default function DashboardPage() {
             <OrderCard key={order.id} order={order} href={`/orders/${order.id}`} />
           ))}
         </div>
+
+        <Pagination page={page} pageSize={PAGE_SIZE} total={total} onPageChange={setPage} />
       </Container>
     </div>
   );

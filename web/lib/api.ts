@@ -1,4 +1,10 @@
 import { apiBaseUrl } from "./site";
+import {
+  getCustomerSession,
+  getStaffSession,
+  setCustomerSession,
+  setStaffSession,
+} from "./auth";
 
 // Mirrors the standard error envelope in docs/11-error-handling.md §1, so
 // every form can surface `error.message` consistently.
@@ -32,16 +38,53 @@ type ApiFetchOptions = RequestInit & {
 
 function currentAccessToken(auth: "customer" | "staff"): string | null {
   if (typeof window === "undefined") return null;
+  const session = auth === "staff" ? getStaffSession() : getCustomerSession();
+  return session?.accessToken ?? null;
+}
+
+// Access tokens expire after 15 minutes (docs/07-api-contract.md §1); rather
+// than force a re-login on every expiry, apiFetch silently exchanges the
+// stored refresh_token for a new pair and retries once. inFlightRefresh
+// dedupes concurrent 401s (e.g. a page firing several requests at once)
+// into a single refresh call instead of one per request.
+const inFlightRefresh: Record<"customer" | "staff", Promise<string | null> | null> = {
+  customer: null,
+  staff: null,
+};
+
+async function refreshAccessToken(auth: "customer" | "staff"): Promise<string | null> {
+  if (inFlightRefresh[auth]) return inFlightRefresh[auth];
+
+  const attempt = (async () => {
+    const path = auth === "staff" ? "/api/v1/auth/refresh" : "/api/v1/customer-auth/refresh";
+    const session = auth === "staff" ? getStaffSession() : getCustomerSession();
+    if (!session?.refreshToken) return null;
+
+    try {
+      const res = await fetch(`${apiBaseUrl}${path}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh_token: session.refreshToken }),
+      });
+      if (!res.ok) return null;
+      const body = await res.json();
+
+      if (auth === "staff" && "user" in session) {
+        setStaffSession({ ...session, accessToken: body.access_token, refreshToken: body.refresh_token });
+      } else if ("customer" in session) {
+        setCustomerSession({ ...session, accessToken: body.access_token, refreshToken: body.refresh_token });
+      }
+      return body.access_token as string;
+    } catch {
+      return null;
+    }
+  })();
+
+  inFlightRefresh[auth] = attempt;
   try {
-    const key =
-      auth === "staff"
-        ? "laundryku.staff_session"
-        : "laundryku.customer_session";
-    const raw = localStorage.getItem(key);
-    if (!raw) return null;
-    return (JSON.parse(raw) as { accessToken?: string }).accessToken ?? null;
-  } catch {
-    return null;
+    return await attempt;
+  } finally {
+    inFlightRefresh[auth] = null;
   }
 }
 
@@ -73,7 +116,8 @@ export async function apiFetch<T>(
     finalHeaders["Idempotency-Key"] = crypto.randomUUID();
   }
 
-  if (auth !== "none" && !finalHeaders["Authorization"]) {
+  const hadExplicitAuthHeader = !!finalHeaders["Authorization"];
+  if (auth !== "none" && !hadExplicitAuthHeader) {
     const token = currentAccessToken(auth);
     if (token) finalHeaders["Authorization"] = `Bearer ${token}`;
   }
@@ -85,6 +129,22 @@ export async function apiFetch<T>(
     throw new Error(
       "Tidak dapat terhubung ke server. Coba lagi beberapa saat lagi.",
     );
+  }
+
+  // A 15-minute-old access token (docs/07-api-contract.md §1) shouldn't force
+  // a re-login mid-session — silently refresh once and replay the request.
+  if (res.status === 401 && auth !== "none" && !hadExplicitAuthHeader) {
+    const newToken = await refreshAccessToken(auth);
+    if (newToken) {
+      finalHeaders["Authorization"] = `Bearer ${newToken}`;
+      try {
+        res = await fetch(`${apiBaseUrl}${path}`, { ...rest, headers: finalHeaders });
+      } catch {
+        throw new Error(
+          "Tidak dapat terhubung ke server. Coba lagi beberapa saat lagi.",
+        );
+      }
+    }
   }
 
   if (!res.ok) {

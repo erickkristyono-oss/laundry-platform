@@ -352,7 +352,25 @@ func (h *Handler) ListOrders(w http.ResponseWriter, r *http.Request) {
 		where = "WHERE " + strings.Join(conditions, " AND ")
 	}
 
-	rows, err := h.Pool.Query(r.Context(), `SELECT id FROM orders `+where+` ORDER BY created_at DESC LIMIT 100`, args...)
+	page := 1
+	if v, err := strconv.Atoi(q.Get("page")); err == nil && v > 0 {
+		page = v
+	}
+	pageSize := 20
+	if v, err := strconv.Atoi(q.Get("page_size")); err == nil && v > 0 && v <= 100 {
+		pageSize = v
+	}
+
+	var total int
+	if err := h.Pool.QueryRow(r.Context(), `SELECT count(*) FROM orders `+where, args...).Scan(&total); err != nil {
+		h.Logger.Error("list orders: count failed", "error", err)
+		respond.Error(w, r, http.StatusInternalServerError, "INTERNAL_ERROR", "Something went wrong.")
+		return
+	}
+
+	limitArg := arg(pageSize)
+	offsetArg := arg((page - 1) * pageSize)
+	rows, err := h.Pool.Query(r.Context(), `SELECT id FROM orders `+where+` ORDER BY created_at DESC LIMIT `+limitArg+` OFFSET `+offsetArg, args...)
 	if err != nil {
 		h.Logger.Error("list orders failed", "error", err)
 		respond.Error(w, r, http.StatusInternalServerError, "INTERNAL_ERROR", "Something went wrong.")
@@ -379,7 +397,12 @@ func (h *Handler) ListOrders(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, o)
 	}
-	respond.JSON(w, http.StatusOK, map[string]any{"data": out})
+	respond.JSON(w, http.StatusOK, map[string]any{
+		"data":      out,
+		"page":      page,
+		"page_size": pageSize,
+		"total":     total,
+	})
 }
 
 // --- PUT /api/v1/orders/{id}/items/{itemId}/weigh ---
