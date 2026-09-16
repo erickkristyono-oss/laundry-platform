@@ -23,11 +23,20 @@ covers Phase 1: the technical foundation that runs against that spec.
   on register/order-creation/payment-creation. The frontend
   (customer dashboard + order form + status timeline, staff console with
   per-status actions) drives all of this directly against the Gateway.
-  **Not yet built** (secondary features, each marked `TODO(phase-2+)` at
-  its call site): refunds, pickup/delivery requests, order transfer, the
-  UQ-05 administrative payment-gate override, staff user management, a
-  key-expiry cleanup job, reporting projections, and notification
-  rendering.
+- **Phase 2, secondary features — backend done, verified via curl (no
+  frontend UI yet):** staff user management (`POST/GET/PATCH /api/v1/users`
+  — create cashiers/admins with role + outlet assignment), pickup/delivery
+  request + completion (system-triggers the documented order transitions),
+  refunds (request → approve/reject, `payment.refunded` cascades to
+  `orders.status = CANCELLED`), and Reporting's event consumers actually
+  build `rpt_order_summary` / `rpt_daily_outlet_sales` / `rpt_refund_summary`
+  now (previously log-and-ack stubs) behind `GET /api/v1/reports/*`.
+  **Still not built:** order transfer, the UQ-05 administrative
+  payment-gate override, a key-expiry cleanup job, `rpt_service_performance`
+  (no event carries per-item data yet — see the note in
+  `services/reporting/internal/handler/events.go`), customer self-service
+  refund requests (staff-only for now), the 7-day refund eligibility
+  window (UQ-04), and notification rendering.
 
 ## Layout
 
