@@ -66,7 +66,7 @@ func (h *Handler) handlePaymentEvent(ctx context.Context, d amqp.Delivery) {
 	case "payment.failed":
 		err = h.projectPaymentStatusIf(ctx, env, "FAILED", []string{"UNPAID", "PENDING"})
 	case "payment.refunded":
-		err = h.projectPaymentStatusIf(ctx, env, "REFUNDED", []string{"PAID"})
+		err = h.handlePaymentRefunded(ctx, env)
 	}
 
 	if err != nil {
@@ -129,6 +129,50 @@ func (h *Handler) handlePaymentPaid(ctx context.Context, env outbox.Envelope) er
 	}
 	if status == "WEIGHING" {
 		if err := h.transitionStatusTx(ctx, tx, orderID, "WEIGHING", "WASHING", "", nil, false); err != nil {
+			return err
+		}
+	}
+
+	if err := markEventProcessed(ctx, tx, env.EventID.String()); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// handlePaymentRefunded additionally cancels the order (docs/10-state-machines.md
+// §3.1: "if order not yet CANCELLED, order transitions to CANCELLED
+// (reason: Refunded)") — MVP treats every refund as a full-order refund
+// (BR-06 keeps one payment per order), so a completed refund always means
+// the whole order is being called off.
+func (h *Handler) handlePaymentRefunded(ctx context.Context, env outbox.Envelope) error {
+	orderID, ok := extractOrderID(env)
+	if !ok {
+		return nil
+	}
+
+	tx, err := h.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var res struct {
+		paymentStatus string
+		orderStatus   string
+	}
+	if err := tx.QueryRow(ctx, `SELECT payment_status, status FROM orders WHERE id = $1`, orderID).Scan(&res.paymentStatus, &res.orderStatus); err != nil {
+		return err
+	}
+
+	if res.paymentStatus == "PAID" {
+		if _, err := tx.Exec(ctx, `UPDATE orders SET payment_status = 'REFUNDED', updated_at = now() WHERE id = $1`, orderID); err != nil {
+			return err
+		}
+	}
+
+	if res.orderStatus != "CANCELLED" {
+		reason := "Refunded"
+		if err := h.transitionStatusTx(ctx, tx, orderID, res.orderStatus, "CANCELLED", "", &reason, false); err != nil {
 			return err
 		}
 	}

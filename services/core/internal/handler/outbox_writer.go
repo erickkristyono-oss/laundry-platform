@@ -3,8 +3,10 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // writeOutboxEvent inserts one outbox_events row inside tx — the entire
@@ -29,4 +31,9 @@ func writeOutboxEvent(ctx context.Context, tx pgx.Tx, aggregateType, aggregateID
 func markEventProcessed(ctx context.Context, tx pgx.Tx, eventID string) error {
 	_, err := tx.Exec(ctx, `INSERT INTO processed_events (event_id) VALUES ($1) ON CONFLICT DO NOTHING`, eventID)
 	return err
+}
+
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }

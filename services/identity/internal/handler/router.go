@@ -29,4 +29,12 @@ func (h *Handler) Mount(r chi.Router) {
 			h.CustomerMe(w, r, httpauth.FromRequest(r).ID)
 		})
 	})
+
+	r.Route("/api/v1/users", func(r chi.Router) {
+		r.Use(httpauth.RequireAuth)
+		r.With(httpauth.RequireStaffRole("SUPER_ADMIN", "OWNER")).Post("/", h.CreateUser)
+		r.With(httpauth.RequireStaffRole("SUPER_ADMIN", "OWNER", "OUTLET_ADMIN")).Get("/", h.ListUsers)
+		r.With(httpauth.RequireStaffRole("SUPER_ADMIN", "OWNER", "OUTLET_ADMIN")).Get("/{id}", h.GetUser)
+		r.With(httpauth.RequireStaffRole("SUPER_ADMIN", "OWNER")).Patch("/{id}", h.UpdateUser)
+	})
 }

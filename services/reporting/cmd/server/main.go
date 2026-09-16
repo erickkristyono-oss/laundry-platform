@@ -2,10 +2,6 @@
 // read-only projections consumed from order.*/payment.* events, rebuildable
 // from the event log. Publishes nothing — no outbox_events table, no relay
 // (docs/06-database-schema.md §5).
-//
-// Phase 1 technical-foundation scaffolding only — see the note in
-// services/identity/cmd/server/main.go. Projection-building logic is a
-// Phase 2 concern; this wires the subscriptions only.
 package main
 
 import (
@@ -18,9 +14,9 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	amqp "github.com/rabbitmq/amqp091-go"
 
 	"laundry-platform/services/reporting/internal/config"
+	"laundry-platform/services/reporting/internal/handler"
 	"laundry-platform/services/reporting/migrations"
 	"laundry-platform/shared/broker"
 	"laundry-platform/shared/health"
@@ -70,19 +66,21 @@ func main() {
 		os.Exit(1)
 	}
 
+	h := handler.New(pool, logger)
+
 	coreDeliveries, err := conn.DeclareConsumerQueue("reporting.core-events", "core.events", []string{"order.#"})
 	if err != nil {
 		logger.Error("failed to declare reporting.core-events queue", slog.Any("error", err))
 		os.Exit(1)
 	}
-	go consumeEvents(ctx, coreDeliveries, logger)
+	go h.ConsumeCoreEvents(ctx, coreDeliveries)
 
 	paymentDeliveries, err := conn.DeclareConsumerQueue("reporting.payment-events", "payment.events", []string{"payment.#"})
 	if err != nil {
 		logger.Error("failed to declare reporting.payment-events queue", slog.Any("error", err))
 		os.Exit(1)
 	}
-	go consumeEvents(ctx, paymentDeliveries, logger)
+	go h.ConsumePaymentEvents(ctx, paymentDeliveries)
 
 	m := metrics.New(serviceName)
 
@@ -98,8 +96,7 @@ func main() {
 	}))
 	r.Handle("/metrics", metrics.Handler())
 
-	// TODO(phase-2): mount /api/v1/reports/* (read-only) per
-	// docs/07-api-contract.md §13.
+	h.Mount(r)
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
@@ -120,24 +117,6 @@ func main() {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(shutdownCtx)
-}
-
-func consumeEvents(ctx context.Context, deliveries <-chan amqp.Delivery, logger *slog.Logger) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case d, ok := <-deliveries:
-			if !ok {
-				return
-			}
-			logger.Info("received event", slog.String("routing_key", d.RoutingKey))
-			// TODO(phase-2): update rpt_* projections, recording
-			// projection_checkpoints.last_event_id for idempotent replay
-			// (docs/06-database-schema.md §5.5).
-			_ = d.Ack(false)
-		}
-	}
 }
 
 func parseLevel(level string) slog.Level {

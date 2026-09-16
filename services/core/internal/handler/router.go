@@ -9,13 +9,15 @@ import (
 
 var staffAny = []string{"SUPER_ADMIN", "OWNER", "OUTLET_ADMIN", "CASHIER", "LAUNDRY_STAFF"}
 var staffAdmin = []string{"SUPER_ADMIN", "OWNER"}
+var staffFulfillment = []string{"SUPER_ADMIN", "OWNER", "OUTLET_ADMIN", "CASHIER", "LAUNDRY_STAFF"}
+var staffDeliveryRequest = []string{"SUPER_ADMIN", "OWNER", "OUTLET_ADMIN", "CASHIER"}
 
-// Mount attaches every Core route (docs/07-api-contract.md §4-8) to r.
-// Notes on scope: pickup/delivery (§9-10) and order transfer are secondary
-// features deferred per the "core flow first" prioritization and are not
-// mounted here yet. Idempotency-Key (docs/11-error-handling.md §4) is only
-// wired for POST /orders so far — the other §12-listed Core endpoints
-// (status transitions, transfer, tax-rate PUT) are a TODO(phase-2+).
+// Mount attaches every Core route (docs/07-api-contract.md §4-10) to r.
+// Notes on scope: order transfer and the UQ-05 override endpoint are
+// secondary features deferred per the "core flow first" prioritization and
+// are not mounted here yet. Idempotency-Key (docs/11-error-handling.md §4)
+// is only wired for POST /orders so far — the other §12-listed Core
+// endpoints (status transitions, transfer, tax-rate PUT) are a TODO(phase-2+).
 func (h *Handler) Mount(r chi.Router) {
 	r.Route("/api/v1/customers", func(r chi.Router) {
 		r.Post("/", h.CreateCustomer) // PUBLIC: guest checkout creates its own customer row
@@ -51,6 +53,16 @@ func (h *Handler) Mount(r chi.Router) {
 		r.With(httpauth.RequireAuth, httpauth.RequireStaffRole(staffAny...)).Put("/{id}/items/{itemId}/weigh", h.WeighItem)
 		r.With(httpauth.RequireAuth, httpauth.RequireStaffRole(staffAny...)).Post("/{id}/finalize-weighing", h.FinalizeWeighing)
 		r.With(httpauth.RequireAuth).Post("/{id}/status", h.ChangeOrderStatus) // role checked per-transition inside the handler
+		r.With(httpauth.RequireAuth).Post("/{id}/pickup", h.RequestPickup)
+		r.With(httpauth.RequireAuth, httpauth.RequireStaffRole(staffDeliveryRequest...)).Post("/{id}/delivery", h.RequestDelivery)
+	})
+
+	r.Route("/api/v1/pickups", func(r chi.Router) {
+		r.With(httpauth.RequireAuth, httpauth.RequireStaffRole(staffFulfillment...)).Patch("/{id}", h.UpdatePickup)
+	})
+
+	r.Route("/api/v1/deliveries", func(r chi.Router) {
+		r.With(httpauth.RequireAuth, httpauth.RequireStaffRole(staffFulfillment...)).Patch("/{id}", h.UpdateDelivery)
 	})
 
 	// Internal, service-to-service only (not proxied by the Gateway's
