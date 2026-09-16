@@ -12,13 +12,26 @@ const methods: { value: "QRIS" | "TRANSFER" | "CARD"; label: string }[] = [
   { value: "CARD", label: "Kartu Debit/Kredit" },
 ];
 
-export function PaymentActions({ orderId, amount }: { orderId: string; amount: number }) {
+export function PaymentActions({
+  orderId,
+  amount,
+}: {
+  orderId: string;
+  amount?: number;
+}) {
   const router = useRouter();
   const [method, setMethod] = useState<"QRIS" | "TRANSFER" | "CARD">("QRIS");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Not payable yet: total_amount only exists after staff finalizes
+  // weighing (docs/07-api-contract.md §11 — CreatePayment requires it).
+  // Shown disabled rather than hidden entirely, so the option is visibly
+  // "coming, not missing" — same pattern as the outlet/service picks.
+  const payable = amount !== undefined;
+
   async function payNow() {
+    if (!payable) return;
     setLoading(true);
     setError(null);
     try {
@@ -44,18 +57,24 @@ export function PaymentActions({ orderId, amount }: { orderId: string; amount: n
   }
 
   return (
-    <div className="mt-4 rounded-xl border border-slate-100 bg-slate-50 p-4">
+    <div className={`mt-4 rounded-xl border border-slate-100 bg-slate-50 p-4 ${!payable ? "opacity-60" : ""}`}>
       <p className="text-sm font-medium text-navy-900">Bayar online sekarang</p>
+      {!payable && (
+        <p className="mt-1 text-xs text-slate-500">
+          Tersedia setelah staf outlet selesai menimbang cucian Anda.
+        </p>
+      )}
       <div className="mt-3 flex flex-wrap gap-2">
         {methods.map((m) => (
           <button
             key={m.value}
             type="button"
+            disabled={!payable}
             onClick={() => setMethod(m.value)}
-            className={`rounded-full px-4 py-1.5 text-xs font-semibold transition-colors ${
+            className={`rounded-full px-4 py-1.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed ${
               method === m.value
                 ? "bg-brand-600 text-white"
-                : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-100"
+                : "bg-white text-slate-600 ring-1 ring-slate-200 hover:enabled:bg-slate-100"
             }`}
           >
             {m.label}
@@ -66,7 +85,7 @@ export function PaymentActions({ orderId, amount }: { orderId: string; amount: n
       <Button
         type="button"
         onClick={payNow}
-        disabled={loading}
+        disabled={loading || !payable}
         className="mt-4 w-full"
       >
         {loading ? "Memproses…" : "Bayar Sekarang"}

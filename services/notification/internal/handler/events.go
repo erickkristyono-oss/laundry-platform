@@ -10,11 +10,15 @@ import (
 	"laundry-platform/shared/outbox"
 )
 
-// ConsumeCoreEvents drives WhatsApp notifications for the order journey
-// (docs/04-service-boundaries.md §5). Only order.created/order.status_changed
-// are rendered today — order.weighed/transferred/payment_overridden are
-// staff/admin-facing concerns, not something the customer needs pinged
-// about on every intermediate write.
+// ConsumeCoreEvents drives WhatsApp notifications for the order lifecycle
+// (docs/04-service-boundaries.md §5). Deliberately narrow: a WhatsApp send
+// costs real money per message, so the customer gets pinged only at
+// order.created ("pesanan diterima") and order.status_changed → COMPLETED
+// — not one message per intermediate journey step
+// (RECEIVED/WASHING/DRYING/IRONING/PACKING/READY/PICKED_UP/DELIVERED),
+// which was confirmed too expensive after testing. Journey progress in
+// between is still visible in-app (the order detail page's status
+// timeline), just not pushed to WhatsApp.
 func (h *Handler) ConsumeCoreEvents(ctx context.Context, deliveries <-chan amqp.Delivery) {
 	h.consume(ctx, deliveries, h.handleCoreEvent)
 }
@@ -65,9 +69,24 @@ func (h *Handler) handleCoreEvent(ctx context.Context, env outbox.Envelope) erro
 		})
 
 	case "order.status_changed":
+		// Deliberately narrow: WhatsApp messages cost real money per send
+		// (Fonnte), and a message for every intermediate journey step
+		// (RECEIVED/WASHING/DRYING/IRONING/PACKING/READY/PICKED_UP/
+		// DELIVERED) was confirmed too expensive in practice. Only three
+		// moments are worth pinging for: order received (order.created,
+		// below), payment status (handlePaymentEvent), and completion.
+		// Completion is never seen here, though — Core emits a distinct
+		// "order.completed" event type for that one transition instead of
+		// order.status_changed (services/core/internal/handler/orders.go,
+		// transitionStatusTx: `if to == "COMPLETED" { eventType =
+		// "order.completed" }`) — handled in the case below. Every other
+		// to_status reaching this case is one of the ones we're
+		// intentionally staying silent on.
+		return nil
+
+	case "order.completed":
 		var p struct {
-			OrderID  string `json:"order_id"`
-			ToStatus string `json:"to_status"`
+			OrderID string `json:"order_id"`
 		}
 		if err := json.Unmarshal(env.Payload, &p); err != nil {
 			return nil
@@ -77,7 +96,7 @@ func (h *Handler) handleCoreEvent(ctx context.Context, env outbox.Envelope) erro
 			return err // transient — worth a retry
 		}
 		return h.notifyCustomer(ctx, env, order.CustomerID, func(customerName string) string {
-			return orderStatusChangedMessage(customerName, order.OrderCode, p.ToStatus)
+			return orderStatusChangedMessage(customerName, order.OrderCode, "COMPLETED")
 		})
 
 	default:

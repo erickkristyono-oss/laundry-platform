@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # Generic multi-stage Dockerfile for any Go service in this monorepo.
 # Build with: docker build -f deployments/docker/Dockerfile.service \
 #   --build-arg SERVICE=identity -t laundry-identity .
@@ -15,7 +16,13 @@ COPY shared/ shared/
 COPY services/${SERVICE}/ services/${SERVICE}/
 
 WORKDIR /src/services/${SERVICE}
-RUN go build -o /out/server ./cmd/server
+# Cache mounts persist across builds (unlike COPY layers, which invalidate
+# on any source change) — without these, every rebuild re-downloaded every
+# Go module from the network and recompiled from zero, which is what made
+# `make up` slow after each edit. See docs/14-architecture-decisions.md.
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go build -o /out/server ./cmd/server
 
 FROM alpine:3.20
 RUN adduser -D -u 10001 appuser

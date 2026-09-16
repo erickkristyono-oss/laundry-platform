@@ -1,15 +1,19 @@
+# syntax=docker/dockerfile:1
 # Build with: docker build -f deployments/docker/Dockerfile.web -t laundry-web .
 # (build context must be the repo root.)
 FROM node:22-alpine AS build
 WORKDIR /src/web
 
 COPY web/package.json web/package-lock.json ./
-RUN npm ci
+RUN --mount=type=cache,target=/root/.npm npm ci
 
 COPY web/ ./
 ARG NEXT_PUBLIC_API_BASE_URL=http://localhost:8080
 ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL
-RUN npm run build
+# Next.js's own incremental build cache — persists across image rebuilds
+# via this cache mount, same reasoning as the Go cache mounts in
+# Dockerfile.service/.gateway.
+RUN --mount=type=cache,target=/src/web/.next/cache npm run build
 
 FROM node:22-alpine
 WORKDIR /app

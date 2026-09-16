@@ -25,6 +25,20 @@ export default function CustomerOrderDetailPage({
       .catch(() => setError("Pesanan tidak ditemukan atau Anda tidak berhak melihatnya."));
   }, [session, id]);
 
+  // A payment/status change often lands via an async event (RabbitMQ outbox
+  // relay, ~2s poll interval) rather than the request that triggered it —
+  // e.g. right after a cash/online payment, this order's own row can take
+  // a couple seconds to reflect PAID. Poll quietly while a change is
+  // plausibly still in flight, instead of leaving the customer staring at
+  // a stale PENDING badge with no indication anything is happening.
+  useEffect(() => {
+    if (!session || order?.payment_status !== "PENDING") return;
+    const interval = setInterval(() => {
+      apiFetch<Order>(`/api/v1/orders/${id}`).then(setOrder).catch(() => {});
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [session, id, order?.payment_status]);
+
   if (!session) return null;
 
   return (
@@ -83,7 +97,7 @@ export default function CustomerOrderDetailPage({
             </div>
 
             <PaymentNotice status={order.payment_status} />
-            {order.payment_status === "UNPAID" && order.total_amount !== undefined && (
+            {order.payment_status === "UNPAID" && (
               <PaymentActions orderId={order.id} amount={order.total_amount} />
             )}
           </div>

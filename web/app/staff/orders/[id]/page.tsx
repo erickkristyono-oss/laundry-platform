@@ -1,6 +1,7 @@
 "use client";
 
 import { use, useEffect, useState } from "react";
+import Link from "next/link";
 import { Container } from "@/components/ui/Container";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -31,6 +32,7 @@ export default function StaffOrderDetailPage({
   const [order, setOrder] = useState<Order | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [syncingPayment, setSyncingPayment] = useState(false);
   const [weights, setWeights] = useState<Record<string, string>>({});
 
   function refresh() {
@@ -100,14 +102,31 @@ export default function StaffOrderDetailPage({
       apiFetch(`/api/v1/orders/${id}/finalize-weighing`, { method: "POST", auth: "staff" }),
     );
 
-  const acceptCashPayment = () =>
-    runAction(() =>
+  async function acceptCashPayment() {
+    await runAction(() =>
       apiFetch("/api/v1/payments", {
         method: "POST",
         auth: "staff",
         body: JSON.stringify({ order_id: id, amount: order?.total_amount, method: "CASH" }),
       }),
     );
+    // The payment itself settles instantly, but Core's copy of
+    // payment_status (and the WEIGHING -> WASHING transition, which
+    // unlocks the next-status buttons below) updates via an async event
+    // — typically ~2-4s behind (shared/outbox's relay polls every 2s).
+    // Without this, the page looks "stuck" on WEIGHING right after a
+    // successful payment until someone thinks to reload it manually.
+    setSyncingPayment(true);
+    for (let attempt = 0; attempt < 6; attempt++) {
+      await new Promise((r) => setTimeout(r, 1500));
+      const updated = await apiFetch<Order>(`/api/v1/orders/${id}`, { auth: "staff" }).catch(() => null);
+      if (updated) {
+        setOrder(updated);
+        if (updated.payment_status === "PAID") break;
+      }
+    }
+    setSyncingPayment(false);
+  }
 
   const allWeighed = order?.items.every((i) => i.actual_weight_kg != null) ?? false;
   const isFinalized = order?.total_amount != null;
@@ -115,6 +134,10 @@ export default function StaffOrderDetailPage({
   return (
     <div className="min-h-[calc(100vh-4rem)] bg-slate-50 py-12">
       <Container className="max-w-2xl">
+        <Link href="/staff" className="mb-4 inline-block text-sm text-slate-500 underline hover:text-slate-700">
+          ← Kembali ke Portal Staf
+        </Link>
+
         {error && <p className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
         {!order && !error && <p className="text-sm text-slate-500">Memuat…</p>}
 
@@ -193,9 +216,16 @@ export default function StaffOrderDetailPage({
                 )}
 
               {order.status === "WEIGHING" && isFinalized && order.payment_status !== "PAID" && (
-                <Button disabled={busy} onClick={acceptCashPayment}>
-                  Terima Pembayaran Tunai
-                </Button>
+                <div className="flex items-center gap-3">
+                  <Button disabled={busy || syncingPayment} onClick={acceptCashPayment}>
+                    Terima Pembayaran Tunai
+                  </Button>
+                  {syncingPayment && (
+                    <span className="text-xs text-slate-500">
+                      Menyinkronkan status pembayaran…
+                    </span>
+                  )}
+                </div>
               )}
 
               {NEXT_STATUS[order.status]?.map((next) => (

@@ -35,8 +35,27 @@ covers Phase 1: the technical foundation that runs against that spec.
   payment-gate override, a key-expiry cleanup job, `rpt_service_performance`
   (no event carries per-item data yet — see the note in
   `services/reporting/internal/handler/events.go`), customer self-service
-  refund requests (staff-only for now), the 7-day refund eligibility
-  window (UQ-04), and notification rendering.
+  refund requests (staff-only for now), and the 7-day refund eligibility
+  window (UQ-04).
+- **Payment gateway (ADR-015) and WhatsApp notifications (ADR-016), plus
+  API docs:** Payment Service now charges through a pluggable
+  `gateway.Provider` — `DummyProvider` today (no real Midtrans/Xendit
+  account yet), swappable for a real one without touching `CreatePayment`.
+  Notification Service renders and sends WhatsApp updates via Fonnte for
+  order-created/status-changed/payment outcomes (falls back to a
+  log-only `NoopSender` until `FONNTE_TOKEN` is set). A hand-authored
+  OpenAPI spec (`docs/openapi.yaml`) is served with Swagger UI at the
+  Gateway's `/docs` — importable into Postman directly.
+- **Automated tests:** unit tests now cover the pure/critical logic —
+  RBAC (`shared/httpauth`), JWT issue/parse (`shared/authtoken`),
+  password hashing (`shared/security`), business-id formatting
+  (`shared/bizid`), Core's order state machine
+  (`services/core/internal/handler`), the dummy payment provider
+  (`services/payment/internal/gateway`), and WhatsApp message rendering
+  (`services/notification/internal/handler`) — run with `make test`.
+  Handler-level tests that need a real database (most CRUD endpoints)
+  are not covered yet; verification for those still relies on the
+  Swagger UI / Postman and manual browser walkthroughs described above.
 
 ## Layout
 
