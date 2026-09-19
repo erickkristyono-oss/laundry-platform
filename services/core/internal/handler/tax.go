@@ -33,7 +33,7 @@ type setTaxRateRequest struct {
 }
 
 // SetTaxRate implements PUT /api/v1/settings/tax-rate
-// (OWNER/SUPER_ADMIN only — docs/07-api-contract.md §7, UQ-09).
+// (OWNER/SUPER_ADMIN only — docs/07-api-contract.md §7, UQ-09)
 func (h *Handler) SetTaxRate(w http.ResponseWriter, r *http.Request) {
 	var req setTaxRateRequest
 	if !decodeJSON(w, r, &req) {

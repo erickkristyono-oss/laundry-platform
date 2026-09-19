@@ -98,7 +98,7 @@ export default function CustomerOrderDetailPage({
 
             <PaymentNotice status={order.payment_status} />
             {order.payment_status === "UNPAID" && (
-              <PaymentActions orderId={order.id} amount={order.total_amount} />
+              <PaymentActions orderId={order.id} amount={order.total_amount} fulfillmentType={order.fulfillment_type} />
             )}
           </div>
         )}

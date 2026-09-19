@@ -12,7 +12,15 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: postgres
     ports:
-      - "5432:5432"
+      # Host port 5433, not 5432: many dev machines already run a native
+      # Postgres on 5432 (Postgres.app, Homebrew) for unrelated projects —
+      # binding the same host port silently loses the connection to
+      # whichever process has the more specific bind (found via a real
+      # DBeaver mix-up), even though nothing here errors at `docker compose
+      # up`. Every service still talks to this container over the internal
+      # docker network as "postgres:5432" (see DATABASE_URL below) — only
+      # the host-facing port for tools like DBeaver/psql changes.
+      - "5433:5432"
     volumes:
       - pg_data:/var/lib/postgresql/data
       - ./postgres/init-databases.sh:/docker-entrypoint-initdb.d/init-databases.sh:ro

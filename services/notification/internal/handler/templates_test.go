@@ -42,6 +42,25 @@ func TestOrderStatusChangedMessage_FallsBackForUnknownStatus(t *testing.T) {
 	mustContain(t, msg, "SOME_FUTURE_STATUS")
 }
 
+func TestOrderWeighedMessage_ContainsTotalAndBothPaymentOptions(t *testing.T) {
+	msg := orderWeighedMessage("Budi", "ORD-1", 22400)
+	mustContain(t, msg, "ORD-1")
+	mustContain(t, msg, "Rp 22.400")
+	mustContain(t, msg, "bayar sekarang")
+	mustContain(t, msg, "pengambilan")
+}
+
+func TestOrderReadyMessage_BranchesOnFulfillmentType(t *testing.T) {
+	pickup := orderReadyMessage("Budi", "ORD-1", "WALK_IN")
+	mustContain(t, pickup, "diambil di outlet")
+
+	delivery := orderReadyMessage("Budi", "ORD-1", "DELIVERY")
+	mustContain(t, delivery, "antar")
+
+	both := orderReadyMessage("Budi", "ORD-1", "PICKUP_AND_DELIVERY")
+	mustContain(t, both, "antar")
+}
+
 func TestPaymentPaidMessage_ContainsAmount(t *testing.T) {
 	msg := paymentPaidMessage("Budi", "ORD-1", 22400)
 	mustContain(t, msg, "Rp 22.400")

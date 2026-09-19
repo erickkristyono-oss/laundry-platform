@@ -10,9 +10,10 @@ import (
 // coreOrder/coreCustomer are the subsets of Core's internal responses
 // Notification needs to render a message (docs/07-api-contract.md §4, §8).
 type coreOrder struct {
-	ID         string `json:"id"`
-	OrderCode  string `json:"order_code"`
-	CustomerID string `json:"customer_id"`
+	ID              string `json:"id"`
+	OrderCode       string `json:"order_code"`
+	CustomerID      string `json:"customer_id"`
+	FulfillmentType string `json:"fulfillment_type"`
 }
 
 type coreCustomer struct {

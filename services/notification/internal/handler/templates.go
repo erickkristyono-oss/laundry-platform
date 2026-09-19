@@ -49,6 +49,36 @@ func orderStatusChangedMessage(customerName, orderCode, toStatus string) string 
 	return fmt.Sprintf("Halo %s, status pesanan %s Anda sekarang: %s.", customerName, orderCode, label)
 }
 
+// orderWeighedMessage fires right after finalize-weighing, once the real
+// total is known (docs/10-state-machines.md — total_amount is null before
+// this point). Mentions both ways to settle it: pay now (same online
+// methods as before — QRIS/transfer/kartu) or at pickup (cash, collected
+// by staff).
+func orderWeighedMessage(customerName, orderCode string, totalAmount int64) string {
+	return fmt.Sprintf(
+		"Halo %s, cucian Anda untuk pesanan %s sudah ditimbang. Total: %s. Anda bisa bayar sekarang (QRIS/transfer/kartu) atau bayar tunai saat pengambilan/pengantaran.",
+		customerName, orderCode, formatIDR(totalAmount),
+	)
+}
+
+// orderReadyMessage fires at READY (docs/10-state-machines.md §1 —
+// "Siap Diambil"): the wording branches on fulfillment_type since a
+// PICKUP/WALK_IN customer needs to come to the outlet, while a
+// DELIVERY/PICKUP_AND_DELIVERY customer is instead told to expect a
+// delivery.
+func orderReadyMessage(customerName, orderCode, fulfillmentType string) string {
+	if fulfillmentType == "DELIVERY" || fulfillmentType == "PICKUP_AND_DELIVERY" {
+		return fmt.Sprintf(
+			"Halo %s, cucian Anda untuk pesanan %s sudah selesai dan akan segera kami antar. Terima kasih!",
+			customerName, orderCode,
+		)
+	}
+	return fmt.Sprintf(
+		"Halo %s, cucian Anda untuk pesanan %s sudah selesai dan siap diambil di outlet. Terima kasih!",
+		customerName, orderCode,
+	)
+}
+
 func paymentPaidMessage(customerName, orderCode string, amount int64) string {
 	return fmt.Sprintf(
 		"Halo %s, pembayaran pesanan %s sebesar %s sudah kami terima. Terima kasih!",

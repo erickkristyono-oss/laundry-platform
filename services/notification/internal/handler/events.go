@@ -12,13 +12,16 @@ import (
 
 // ConsumeCoreEvents drives WhatsApp notifications for the order lifecycle
 // (docs/04-service-boundaries.md §5). Deliberately narrow: a WhatsApp send
-// costs real money per message, so the customer gets pinged only at
-// order.created ("pesanan diterima") and order.status_changed → COMPLETED
-// — not one message per intermediate journey step
-// (RECEIVED/WASHING/DRYING/IRONING/PACKING/READY/PICKED_UP/DELIVERED),
-// which was confirmed too expensive after testing. Journey progress in
-// between is still visible in-app (the order detail page's status
-// timeline), just not pushed to WhatsApp.
+// costs real money per message, so the customer gets pinged only at five
+// moments — order.created ("pesanan diterima"), order.weighed ("sudah
+// ditimbang, total segini, bayar sekarang atau di tempat"),
+// order.status_changed → READY ("siap diambil/diantar"), payment status
+// (handlePaymentEvent), and order.completed — not one message per
+// intermediate journey step (RECEIVED/WASHING/DRYING/IRONING/
+// PACKING/PICKED_UP/DELIVERED), which was confirmed too expensive after
+// testing (ADR-016 amendment 2026-09-16). Journey progress in between is
+// still visible in-app (the order detail page's status timeline), just not
+// pushed to WhatsApp.
 func (h *Handler) ConsumeCoreEvents(ctx context.Context, deliveries <-chan amqp.Delivery) {
 	h.consume(ctx, deliveries, h.handleCoreEvent)
 }
@@ -68,21 +71,56 @@ func (h *Handler) handleCoreEvent(ctx context.Context, env outbox.Envelope) erro
 			return orderCreatedMessage(customerName, p.OrderCode)
 		})
 
+	case "order.weighed":
+		// Fires at finalize-weighing, the moment total_amount is first
+		// known (docs/06-database-schema.md §2.7) — tells the customer the
+		// real total and that they can pay now or at pickup (BR-06/BR-07;
+		// the payment *method* is unchanged either way, see ADR-016
+		// amendment 2026-09-18).
+		var p struct {
+			OrderID     string `json:"order_id"`
+			TotalAmount int64  `json:"total_amount"`
+		}
+		if err := json.Unmarshal(env.Payload, &p); err != nil {
+			return nil
+		}
+		order, err := h.fetchCoreOrder(ctx, p.OrderID)
+		if err != nil {
+			return err
+		}
+		return h.notifyCustomer(ctx, env, order.CustomerID, func(customerName string) string {
+			return orderWeighedMessage(customerName, order.OrderCode, p.TotalAmount)
+		})
+
 	case "order.status_changed":
 		// Deliberately narrow: WhatsApp messages cost real money per send
 		// (Fonnte), and a message for every intermediate journey step
-		// (RECEIVED/WASHING/DRYING/IRONING/PACKING/READY/PICKED_UP/
-		// DELIVERED) was confirmed too expensive in practice. Only three
-		// moments are worth pinging for: order received (order.created,
-		// below), payment status (handlePaymentEvent), and completion.
-		// Completion is never seen here, though — Core emits a distinct
-		// "order.completed" event type for that one transition instead of
-		// order.status_changed (services/core/internal/handler/orders.go,
+		// (RECEIVED/WASHING/DRYING/IRONING/PACKING/PICKED_UP/DELIVERED) was
+		// confirmed too expensive in practice. The moments worth pinging
+		// for: order received (order.created), weighed (order.weighed,
+		// above), READY (below — "siap diambil/diantar"), payment status
+		// (handlePaymentEvent), and completion (order.completed, below —
+		// Core emits a distinct event type for that one transition instead
+		// of order.status_changed, services/core/internal/handler/orders.go
 		// transitionStatusTx: `if to == "COMPLETED" { eventType =
-		// "order.completed" }`) — handled in the case below. Every other
-		// to_status reaching this case is one of the ones we're
-		// intentionally staying silent on.
-		return nil
+		// "order.completed" }`).
+		var p struct {
+			OrderID  string `json:"order_id"`
+			ToStatus string `json:"to_status"`
+		}
+		if err := json.Unmarshal(env.Payload, &p); err != nil {
+			return nil
+		}
+		if p.ToStatus != "READY" {
+			return nil
+		}
+		order, err := h.fetchCoreOrder(ctx, p.OrderID)
+		if err != nil {
+			return err
+		}
+		return h.notifyCustomer(ctx, env, order.CustomerID, func(customerName string) string {
+			return orderReadyMessage(customerName, order.OrderCode, order.FulfillmentType)
+		})
 
 	case "order.completed":
 		var p struct {
